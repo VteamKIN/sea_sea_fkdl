@@ -1,0 +1,38 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/libraries/zf_common",
+                "${workspaceFolder}/libraries",
+                "${workspaceFolder}/libraries/**",
+                "${workspaceFolder}/libraries/infineon_libraries/**",
+                "${workspaceFolder}/code",
+                "${workspaceFolder}/user",
+                "D:/AURIX-Studio-1.10.2/AURIX-v1.10.2-workspace/testest/libraries/zf_common",
+                "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/include",
+                "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/include.cpp",
+                "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/include.cxx",
+                "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/include.lsl"
+            ],
+            "compilerPath": "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/bin/cctc.exe",
+            "defines": [],
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-gcc-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/code",
+                    "${workspaceFolder}/user",
+                    "${workspaceFolder}/libraries",
+                    "D:/AURIX-Studio-1.10.2/AURIX-v1.10.2-workspace/testest/libraries/zf_common",
+                    "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/include",
+                    "D:/AURIX-Studio-1.10.2/AURIX-Studio-1.10.2/tools/Compilers/Tasking_1.1r8/ctc/include.cpp"
+                ],
+                "limitSymbolsToIncludedHeaders": false
+            }
+        }
+    ],
+    "version": 4
+}

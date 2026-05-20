@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-03T09:05:46.702Z
+provider: 
+---
+
+永远不要去修改testest\libraries中的任何内容，libraries/zf_common/zf_common_headfile.h例外，可以在文件中添加引用。

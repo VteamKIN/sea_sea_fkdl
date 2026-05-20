@@ -1,0 +1,26 @@
+# 编译输出目录
+Debug/
+Release/
+
+# 对象文件
+*.o
+*.obj
+*.src
+
+# 依赖文件
+*.d
+
+# 链接输出
+*.elf
+*.hex
+*.map
+*.mdf
+
+# IDE 临时文件
+.settings/
+.metadata/
+
+# 其他
+*.opt
+*.bak
+*.tmp

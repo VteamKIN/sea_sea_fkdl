@@ -1,0 +1,122 @@
+//void get_BLY_img(float L_line[][2], int *Lnum, float R_line[][2], int *Rnum, int len)
+#define AT                  AT_IMAGE
+#define AT_CLIP(img, x, y)  AT_IMAGE((img), clip((x), 0, (img)->width-1), clip((y), 0, (img)->height-1));
+extern int clip(int x, int low, int up);
+const int dir_front[4][2] = {{0,  -1},//上
+                            {1,  0},  //右
+                            {0,  1},  //下
+                            {-1, 0}}; //左
+const int dir_frontleft[4][2] = {{-1, -1},//左上
+                                {1,  -1}, //右上
+                                {1,  1},  //右下
+                                {-1, 1}}; //左下
+const int dir_frontright[4][2] = {{1,  -1},//右上
+                                {1,  1},   //右下
+                                {-1, 1},   //左下
+                                {-1, -1}}; //左上
+int BLOCK_SIZE=7;                    //局部区域大小
+
+int clip_value = 0;  // 改为正数！这是关键
+
+// 修正跟踪函数 - 移除错误的 *num = 1
+void findline_lefthand_adaptive(image_t *img, int block_size, int clip_value,
+                                int x, int y, int pts[][2], int *num)
+{
+    int half = block_size / 2;
+    int step = 0, dir = 0, turn = 0;
+
+    while (step < xun_xian_cs && x >= half && x < (int)img->width - half &&
+           y >= half && y < (int)img->height - half && turn < 4)
+    {
+        int local_thres = 0;
+        for (int dy = -half; dy <= half; dy++)
+        {
+            for (int dx = -half; dx <= half; dx++)
+            {
+                local_thres += AT(img, x + dx, y + dy);
+            }
+        }
+        local_thres /= block_size * block_size;
+        local_thres += clip_value;
+
+        int front_value = AT(img, x + dir_front[dir][0], y + dir_front[dir][1]);
+        int frontleft_value = AT(img, x + dir_frontleft[dir][0], y + dir_frontleft[dir][1]);
+
+        if (front_value < local_thres)
+        {
+            dir = (dir + 1) % 4;
+            turn++;
+        }
+        else if (frontleft_value < local_thres)
+        {
+            x += dir_front[dir][0];
+            y += dir_front[dir][1];
+            pts[step][0] = x;
+            pts[step][1] = y;
+            step++;
+            turn = 0;
+        }
+        else
+        {
+            x += dir_frontleft[dir][0];
+            y += dir_frontleft[dir][1];
+            dir = (dir + 3) % 4;
+            pts[step][0] = x;
+            pts[step][1] = y;
+            step++;
+            turn = 0;
+        }
+    }
+    *num = step;
+}
+
+void findline_righthand_adaptive(image_t *img, int block_size, int clip_value,
+                                 int x, int y, int pts[][2], int *num)
+{
+    int half = block_size / 2;
+    int step = 0, dir = 0, turn = 0;
+
+    while (step < xun_xian_cs && x >= half && x < (int)img->width - half &&
+           y >= half && y < (int)img->height - half && turn < 4)
+    {
+        int local_thres = 0;
+        for (int dy = -half; dy <= half; dy++)
+        {
+            for (int dx = -half; dx <= half; dx++)
+            {
+                local_thres += AT(img, x + dx, y + dy);
+            }
+        }
+        local_thres /= block_size * block_size;
+        local_thres += clip_value;
+
+        int front_value = AT(img, x + dir_front[dir][0], y + dir_front[dir][1]);
+        int frontright_value = AT(img, x + dir_frontright[dir][0], y + dir_frontright[dir][1]);
+
+        if (front_value < local_thres)
+        {
+            dir = (dir + 3) % 4;
+            turn++;
+        }
+        else if (frontright_value < local_thres)
+        {
+            x += dir_front[dir][0];
+            y += dir_front[dir][1];
+            pts[step][0] = x;
+            pts[step][1] = y;
+            step++;
+            turn = 0;
+        }
+        else
+        {
+            x += dir_frontright[dir][0];
+            y += dir_frontright[dir][1];
+            dir = (dir + 1) % 4;
+            pts[step][0] = x;
+            pts[step][1] = y;
+            step++;
+            turn = 0;
+        }
+    }
+    *num = step;
+}

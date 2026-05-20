@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug AURIX",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "external",
+            "gdbTarget": "localhost:2331",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/Debug/testest.elf",
+            "device": "TC26x",
+            "svdFile": "",
+            "runToEntryPoint": "main",
+            "preLaunchTask": "build"
+        }
+    ]
+}

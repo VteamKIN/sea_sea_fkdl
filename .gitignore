@@ -19,6 +19,13 @@ Release/
 # IDE 临时文件
 .settings/
 .metadata/
+.vscode/
+
+# AI 工具配置
+.codebuddy/
+.lingma/
+.sixth/
+.trae/
 
 # 其他
 *.opt

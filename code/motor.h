@@ -26,14 +26,16 @@
 //#define R_CH ATOM0_CH4_P02_4
 //#define R_CL ATOM0_CH5_P02_5
 
-#define F_CH ATOM0_CH6_P02_6
-#define F_CL ATOM1_CH2_P10_5
+#define F_CH ATOM1_CH2_P10_5
+#define F_CL ATOM0_CH6_P02_6
 
 void motor_init(void);
+void fan_init(void);
 void motor_left(int speed);
 void motor_right(int speed);
 void motor_set(int left_speed, int right_speed);
 void fan_set(int fan_speed);
 void motor_stop(void);
+void fan_slow_stop(void);
 void motor_close(void);
 #endif /* CODE_MOTOR_H_ */

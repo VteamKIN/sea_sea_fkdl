@@ -27,6 +27,7 @@ void all_init(void)
     encoder_init();
 
     // 电机 PWM
+    fan_init();
     motor_init();
 
     // 逆透视 LUT（一次性计算所有查表位置，运行时 WarpPerspective 只需查表）

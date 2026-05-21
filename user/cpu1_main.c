@@ -5,6 +5,9 @@
 // CPU1 图像处理结果就绪标志的实际定义（CPU0 通过 extern 引用）
 volatile vuint8 cpu1_img_ready_flag = 0;
 
+// 负压驱动就绪后才允许控制轮子（CPU0 置 1，ISR 中判断）
+volatile vuint8 control_enable_flag = 0;
+
 
 // 工程导入到软件之后，应该选中工程然后点击refresh刷新一下之后再编译
 // 工程默认设置为关闭优化，可以自己右击工程选择properties->C/C++ Build->Setting
@@ -28,7 +31,7 @@ void core1_main(void)
     car_running = 1;                        // 初始化运行状态
 
     // 启动 4ms PIT 定时器，图像处理 + 控制闭环在 CCU61_CH1 ISR 中完成
-    //pit_ms_init(CCU61_CH1, 4);
+    pit_ms_init(CCU61_CH1, 4);
 
     while (TRUE)
     {

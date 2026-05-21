@@ -90,7 +90,10 @@ IFX_INTERRUPT(cc61_pit_ch1_isr, 0, CCU6_1_CH1_ISR_PRIORITY)
     {
 
         img_process();
-        control_process();
+        if(control_enable_flag)
+        {
+            control_process();
+        }
 
         __dsync();
         cpu1_img_ready_flag = 1;

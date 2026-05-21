@@ -33,7 +33,7 @@ vuint8 right_edge_count = 0;         // 右边线点数
 
 
 vuint8  dir_count = 0;               // 当前弯道序号(0~19)
-int8  choose[road_num] = {1,1,1,0,1,1,1,-1};  // 弯道方向选择 0:循左线 1:循右线 -1:停止
+int8  choose[road_num] = {1,0,1,1,1,1,-1};  // 弯道方向选择 0:循左线 1:循右线 -1:停止
 uint16 curve_lockout_ms[road_num] = {5,200,3,5,0,1,50,200,2,3,2,3,4,6,0,10}; // 每个弯道退弯后锁定帧数（独立设置）
 vint8 current_target_dir = 0;        // 当前循线方向(choose[dir_count]的缓存)
 vuint8 dir_advance_pending = 0;      // dir_count 推进事件信号（detect_road_type 退弯瞬间设 1，control.c 处理后清 0）

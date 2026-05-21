@@ -12,8 +12,12 @@ int core0_main(void)
     all_init();
 
     cpu_wait_event_ready();         // 等待所有核心初始化完毕
-    //system_delay_ms(1000);
-    
+
+    // 先启动负压风扇，等待负压建立后再允许轮子控制
+    fan_set(3000);
+    system_delay_ms(1000);           // 等待 1000ms 让负压建立
+    control_enable_flag = 1;        // 允许 ISR 中的 control_process() 执行
+
     while (TRUE)
     {
         // 电机开环测试

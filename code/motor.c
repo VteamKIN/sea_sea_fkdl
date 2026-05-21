@@ -21,10 +21,14 @@ void motor_init(void)
     pwm_init(L_CL, 17*1000, 0);
     pwm_init(R_CH, 17*1000, 0);
     pwm_init(R_CL, 17*1000, 0);
+
+}
+
+void fan_init(void)
+{
     pwm_init(F_CH, 17*1000, 0);
     pwm_init(F_CL, 17*1000, 0);
 }
-
 
 
 
@@ -74,7 +78,7 @@ void fan_set(int fan_speed)
     if (fan_speed >= 0)
     {
             pwm_set_duty(F_CH, fan_speed);
-            pwm_set_duty(F_CL, 10000);
+            pwm_set_duty(F_CL, 0);
     }
     else
     {
@@ -83,10 +87,13 @@ void fan_set(int fan_speed)
     }
 }
 
+void fan_slow_stop(void)
+{
+    fan_set(0);
+}
 void motor_stop(void)
 {
     motor_set(0, 0);
-    fan_set(0);
 
 }
 

@@ -33,12 +33,9 @@ float kd = 0.0f;                            // PID 微分系数
 vint16 P = 0;                               // 比例项
 vint16 I = 0;                               // 积分项（限幅 ±I_LIMIT）
 vint16 D = 0;                               // 微分项
-vint16 i_max = 0;                           // 积分最大值
 
 // 偏差变量
 vint16 error_image = 0;                     // 图像偏差（像素，PID 输入，±50 限幅）
-vint16 error_left = 0;                      // 循左边线偏差（外部观察接口，calc_error_image 不更新）
-vint16 error_right = 0;                     // 循右边线偏差（外部观察接口，calc_error_image 不更新）
 vint16 last_error_image = 0;                // 上一帧 error_image（PID 微分项 D = 当前 - 上一帧）
 vint16 last_error = 0;                      // 上一帧 error_image（calc_error_image 末尾平滑滤波用）
 
@@ -47,9 +44,13 @@ static vint16 last_output = 0;              // 上一帧 PID 输出
 vint16 output = 0;                          // PID 输出（速度偏移量，限幅 ±OUTPUT_LIMIT）
 
 // 电机速度
-int16 control_base_speed = 1000;             //控制模块基础速度
+int16 control_base_speed = 1200;             //控制模块基础速度
 vint16 left_speed = 0;                      // 左轮速度
 vint16 right_speed = 0;                     // 右轮速度
+
+// Pure Pursuit 参数
+int16  pursuit_lookahead = 40;              // 前瞻取边线第 N 个点（索引，0=底部最近）
+int16  pursuit_inward_bias = 3;             // 弯道内偏量（像素，循单边时朝内侧偏置）
 
 // speed_change 调参
 int16 speed_change_step       = 10;     // LINEAR    每帧步长
@@ -86,297 +87,98 @@ static int16 int_limit(int16 value, int16 limit)
 }
 
 //===================================================================================================================
-// 函数简介     计算直方图中位数
-// 参数说明     hist    直方图数组
-// 参数说明     total   权重总和
-// 返回参数     int16   中位数对应的 x 坐标
-// 备注信息     从 x=0 累加过 total/2 即中位数，适用于双峰分布（双边线合并）
+// 函数简介     取边线第 idx 个点（前瞻目标）
+// 参数说明     edge       边线点数组 [i][0]=x [i][1]=y，索引 0=底部（近车）
+// 参数说明     count      边线点数
+// 参数说明     idx        目标点索引
+// 参数说明     out_x,out_y 输出目标点
+// 返回参数     uint8      1=找到目标点（点数不足时返回最末点） 0=边线为空
+// 备注信息     索引超出 count-1 时返回最末点（仍提供方向信息）
 //===================================================================================================================
-static int16 get_hist_median(const uint16 *hist, int total)
+#define PURSUIT_MIN_POINTS    3
+static uint8 pursuit_walk_edge(const int16 edge[][2], int count, int idx,
+                               int16 *out_x, int16 *out_y)
 {
-    int mid = total / 2;
-    int acc = 0;
-    for (int x = 0; x < WARP_IMAGE_W; x++)
-    {
-        acc += hist[x];
-        if (acc > mid)
-        {
-            return (int16)x;
-        }
-    }
-    return (int16)(WARP_IMAGE_W / 2);
+    if (count < PURSUIT_MIN_POINTS) return 0;
+
+    if (idx >= count) idx = count - 1;
+    if (idx < 0)      idx = 0;
+
+    *out_x = edge[idx][0];
+    *out_y = edge[idx][1];
+    return 1;
 }
 
 //===================================================================================================================
-// 函数简介     计算直方图主峰中心（众数邻域加权重心）
-// 参数说明     hist    直方图数组
-// 参数说明     total   权重总和
-// 返回参数     int16   主峰中心 x 坐标
-// 备注信息     适用单峰分布，先找 argmax 再在 ±HIST_PEAK_RADIUS 邻域加权求重心，抗离群点
-//===================================================================================================================
-static int16 get_hist_mode_center(const uint16 *hist, int total)
-{
-    if (total <= 0) return (int16)(WARP_IMAGE_W / 2);
-
-    // 扫描最大值位置
-    int max_val = 0;
-    int peak_x = WARP_IMAGE_W / 2;
-    for (int x = 0; x < WARP_IMAGE_W; x++)
-    {
-        if (hist[x] > max_val)
-        {
-            max_val = hist[x];
-            peak_x = x;
-        }
-    }
-
-    // 主峰邻域加权重心，平滑离群点
-    int x_lo = peak_x - HIST_PEAK_RADIUS;
-    int x_hi = peak_x + HIST_PEAK_RADIUS;
-    if (x_lo < 0) x_lo = 0;
-    if (x_hi >= WARP_IMAGE_W) x_hi = WARP_IMAGE_W - 1;
-
-    int sum_xw = 0;
-    int sum_w = 0;
-    for (int x = x_lo; x <= x_hi; x++)
-    {
-        sum_xw += x * hist[x];
-        sum_w  += hist[x];
-    }
-
-    if (sum_w > 0)
-        return (int16)(sum_xw / sum_w);
-    return (int16)peak_x;
-}
-
-//===================================================================================================================
-// 函数简介     扫描 edge_list 并累计加权直方图
-// 参数说明     edge / edge_count              边线点数组及点数
-// 参数说明     y_start / y_end                采样区 y 范围 [含, 不含)
-// 参数说明     hist / weight_sum / raw_count   输出直方图、权重总和、原始点计数
-// 参数说明     line_min / line_max             可选，每行 x 极值（NULL 跳过）
-// 返回参数     void
-// 备注信息     权重 = y - y_start + 1（近景重远景轻）
-//===================================================================================================================
-static void collect_edge_hist(const int16 edge[][2], int edge_count,
-                              int y_start, int y_end,
-                              uint16 *hist, int *weight_sum, int *raw_count,
-                              int16 *line_min, int16 *line_max)
-{
-    int y_span = y_end - y_start;
-    if (line_min)
-    {
-        for (int i = 0; i < y_span; i++) line_min[i] = 32767;
-    }
-    if (line_max)
-    {
-        for (int i = 0; i < y_span; i++) line_max[i] = -32768;
-    }
-    for (int i = 0; i < edge_count; i++)
-    {
-        int y = edge[i][1];
-        if (y >= y_start && y < y_end)
-        {
-            int x = edge[i][0];
-            if (x >= 0 && x < WARP_IMAGE_W)
-            {
-                int w = y - y_start + 1;
-                hist[x] = (uint16)(hist[x] + w);
-                *weight_sum += w;
-                (*raw_count)++;
-                int idx = y - y_start;
-                if (line_min && x < line_min[idx]) line_min[idx] = x;
-                if (line_max && x > line_max[idx]) line_max[idx] = x;
-            }
-        }
-    }
-}
-
-//===================================================================================================================
-// 函数简介     计算图像偏差 error_image（PID 输入）
+// 函数简介     计算图像偏差 error_image（PID 输入）— Pure Pursuit
 // 参数说明     void
 // 返回参数     void（结果写入全局 error_image）
-// 备注信息     采样区 [y=65,75)；直道取 median，弯道取 mode + curve_offset 内偏
-//             单边降级用对侧 ± 赛道宽反推；异常时 error_image *= 0.7 衰减
+// 备注信息     取边线第 pursuit_lookahead 个点为目标点 Tx，error = Tx - 中心
+//             直道循双边中点，左/右弯循对应边线 ± (width_half - inward_bias)
+//             两边都丢线时 error 衰减
 //===================================================================================================================
 void calc_error_image(void)
 {
-    // 前方采样区域
-    int y_start = 50;
-    int y_end = 60;
-    int y_span = y_end - y_start;     // 10
-
-    // 弯道偏移量（循边线时，目标位置相对图像中心的偏移）
-    int16 curve_offset = 0;
-
-    // 计数直方图（按 y 加权累计），权重 weight = y - y_start + 1，近景高远景低
-    uint16 hist[WARP_IMAGE_W] = {0};
-    uint16 hist_left[WARP_IMAGE_W] = {0};
-    uint16 hist_right[WARP_IMAGE_W] = {0};
-    int weight_sum = 0;
-    int left_weight_sum = 0;
-    int right_weight_sum = 0;
-    int left_raw_count = 0;
-    int right_raw_count = 0;
-
-    // 单边降级时直接覆写虚拟中心（>=0 表示有效）
-    int16 virtual_center_override = -1;
-    // 主路径直方图算法选择：循单边时用 mode（抗三极管离群点），双边循中线时用 median
-    int use_mode_for_main = 0;
-
-    // 按 road_type 扫描边线 + 合成 hist + 单边 fallback
-    uint8 at_t_junction = (current_junction == JUNCTION_LEFT_T  ||
-                           current_junction == JUNCTION_RIGHT_T ||
-                           current_junction == JUNCTION_T       ||
-                           current_junction == JUNCTION_CROSS);
-    int16 width_full = (road_width_avg > 0) ? (int16)road_width_avg : 60;
+    int16 width_full = (road_width_avg > 0) ? (int16)road_width_avg : 3;
     int16 width_half = width_full / 2;
+    int16 inward_off = width_half - pursuit_inward_bias;
+    if (inward_off < 0) inward_off = 0;
+
+    int16 Lx = 0, Ly = 0, Rx = 0, Ry = 0;
+    uint8 left_ok  = pursuit_walk_edge(left_edge,  left_edge_count,
+                                       pursuit_lookahead, &Lx, &Ly);
+    uint8 right_ok = pursuit_walk_edge(right_edge, right_edge_count,
+                                       pursuit_lookahead, &Rx, &Ry);
+
+    int16 target_x = WARP_IMAGE_W / 2;
+    uint8 target_valid = 0;
 
     switch (road_type)
     {
         case straight:
-        {
-            // 直道：双侧边线 + line_min/max 供交叉检测
-            int16 left_min[10];
-            int16 right_max[10];
-            collect_edge_hist(left_edge,  left_edge_count,  y_start, y_end,
-                              hist_left,  &left_weight_sum,  &left_raw_count,
-                              left_min, NULL);
-            collect_edge_hist(right_edge, right_edge_count, y_start, y_end,
-                              hist_right, &right_weight_sum, &right_raw_count,
-                              NULL, right_max);
-
-            // 双边合并取 median ≈ 赛道中线
-            for (int x = 0; x < WARP_IMAGE_W; x++)
+            if (left_ok && right_ok)
             {
-                hist[x] = (uint16)(hist_left[x] + hist_right[x]);
-            }
-            weight_sum = left_weight_sum + right_weight_sum;
-
-            // 左右交叉 → 衰减返回
-            for (int i = 0; i < y_span; i++)
-            {
-                if (left_min[i] != 32767 && right_max[i] != -32768 && left_min[i] >= right_max[i])
-                {
-                    error_image = error_image * 7 / 10;
-                    return;
-                }
-            }
-            // 两侧不足 → 衰减
-            if (left_raw_count < 2 && right_raw_count < 2)
-            {
-                error_image = error_image * 7 / 10;
-                return;
-            }
-            // 单边 fallback：用对侧主峰 ± 半宽反推虚拟中线（非 T 字）
-            if (left_raw_count < 2 && right_raw_count >= 2 && !at_t_junction)
-            {
-                int16 right_peak = get_hist_mode_center(hist_right, right_weight_sum);
-                virtual_center_override = right_peak - width_half;
-            }
-            else if (right_raw_count < 2 && left_raw_count >= 2 && !at_t_junction)
-            {
-                int16 left_peak = get_hist_mode_center(hist_left, left_weight_sum);
-                virtual_center_override = left_peak + width_half;
+                target_x = (int16)((Lx + Rx) / 2);
+                target_valid = 1;
             }
             break;
-        }
 
         case left:
-            // 左弯：curve_offset = +3 内偏
-            curve_offset = 3;
-            collect_edge_hist(left_edge, left_edge_count, y_start, y_end,
-                              hist_left, &left_weight_sum, &left_raw_count,
-                              NULL, NULL);
-            if (left_raw_count >= 2)
+            if (left_ok)
             {
-                // 主路径：左边线 mode 作为虚拟峰位
-                for (int x = 0; x < WARP_IMAGE_W; x++)
-                {
-                    hist[x] = hist_left[x];
-                }
-                weight_sum = left_weight_sum;
-                use_mode_for_main = 1;
+                target_x = Lx + inward_off;
+                target_valid = 1;
             }
-            else
-            {
-                // 左线不足 → 右侧 fallback
-                collect_edge_hist(right_edge, right_edge_count, y_start, y_end,
-                                  hist_right, &right_weight_sum, &right_raw_count,
-                                  NULL, NULL);
-                if (right_raw_count >= 2)
-                {
-                    int16 right_peak = get_hist_mode_center(hist_right, right_weight_sum);
-                    virtual_center_override = right_peak - width_full;
-                }
-            }
-            // 左右都不足时 virtual_center_override 仍为 -1 → 步骤2 衰减返回
             break;
 
         case right:
-            // 右弯：curve_offset = -3 内偏
-            curve_offset = -3;
-            collect_edge_hist(right_edge, right_edge_count, y_start, y_end,
-                              hist_right, &right_weight_sum, &right_raw_count,
-                              NULL, NULL);
-            if (right_raw_count >= 2)
+            if (right_ok)
             {
-                // 主路径：右边线 mode 作为虚拟峰位
-                for (int x = 0; x < WARP_IMAGE_W; x++)
-                {
-                    hist[x] = hist_right[x];
-                }
-                weight_sum = right_weight_sum;
-                use_mode_for_main = 1;
-            }
-            else
-            {
-                // 右线不足 → 左侧 fallback
-                collect_edge_hist(left_edge, left_edge_count, y_start, y_end,
-                                  hist_left, &left_weight_sum, &left_raw_count,
-                                  NULL, NULL);
-                if (left_raw_count >= 2)
-                {
-                    int16 left_peak = get_hist_mode_center(hist_left, left_weight_sum);
-                    virtual_center_override = left_peak + width_full;
-                }
+                target_x = Rx - inward_off;
+                target_valid = 1;
             }
             break;
     }
 
-    // hist / virtual_center_override → virtual_center → error_image
-    int16 virtual_center;
-    if (virtual_center_override >= 0)
+    if (!target_valid)
     {
-        virtual_center = virtual_center_override;
+        // 丢线 → 维持上一帧偏差不变
+        return;
     }
-    else
-    {
-        // 至少需要 5 个原始点，否则误差向 0 衰减
-        if (left_raw_count + right_raw_count < 5)
-        {
-            error_image = error_image * 7 / 10;
-            return;
-        }
-        if (use_mode_for_main)
-            virtual_center = get_hist_mode_center(hist, weight_sum);
-        else
-            virtual_center = get_hist_median(hist, weight_sum);
-    }
-    // clamp 到有效范围
-    if (virtual_center < 0) virtual_center = 0;
-    if (virtual_center >= WARP_IMAGE_W) virtual_center = WARP_IMAGE_W - 1;
 
-    // 计算偏差
-    int16 new_error = virtual_center - WARP_IMAGE_W / 2 - curve_offset;
+    // clamp 目标 x
+    if (target_x < 0) target_x = 0;
+    if (target_x > WARP_IMAGE_W - 1) target_x = WARP_IMAGE_W - 1;
+
+    int16 new_error = target_x - WARP_IMAGE_W / 2;
 
     // 限幅
     if (new_error > 50) new_error = 50;
     if (new_error < -50) new_error = -50;
 
     // 平滑滤波
-    error_image = 0.9f * new_error + 0.1f * last_error;
-    last_error = error_image;
+    error_image = (int16)(0.9f * (float)new_error + 0.1f * (float)last_error);
+    last_error  = error_image;
 }
 
 
@@ -415,6 +217,7 @@ void control_process(void)
 
     if (img_process_time == 0)
     {
+        car_running = 0;
         motor_control(0, 0);
         return;
     }
@@ -437,17 +240,9 @@ void control_process(void)
     if (!car_running)
     {
         motor_control(0, 0);
+        fan_slow_stop();
         return;
     }
-
-    // dir_advance 事件响应：重置 PID
-    if (dir_advance_pending)
-    {
-        dir_advance_count++;
-        control_pid_reset();
-        dir_advance_pending = 0;
-    }
-
 
     // 计算图像偏差
     calc_error_image();
@@ -460,6 +255,7 @@ void control_process(void)
     // 电机控制
     motor_control(control_base_speed + output, control_base_speed - output);
 
+    dir_advance_pending = 0;
     uint16 time2 = system_getval_us();
     process_time = time2 - time1;
 }
@@ -566,7 +362,6 @@ void speed_change(int16 cur_speed, int16 tar_speed, change_mode_enum mode)
 
     control_base_speed = (int16)n;
 }
-
 
 
 

@@ -1,54 +1,54 @@
-# �������Ŀ¼
+# 编译输出目录
 Debug/
 Release/
 
-# �����ļ�
+# 对象文件
 *.o
 *.obj
 *.src
 
-# �����ļ�
+# 依赖文件
 *.d
 
-# �������
+# 链接输出
 *.elf
 *.hex
 *.map
 *.mdf
 
-# IDE ��ʱ�ļ�
+# IDE 临时文件
 .settings/
 .metadata/
 .vscode/
 
-# AI ��������
+# AI 工具配置
 .codebuddy/
 .lingma/
 .sixth/
 .trae/
 
-# ����
+# 其他
 *.opt
 *.bak
 *.tmp
 auto_push.bat
 
-# ���߽ű�
-AURIX�޸Ĺ�������.bat
-AURIX�޸Ĺ������ƽ̳�.txt
-ɾ����ʱ�ļ�.bat
+# 工具脚本
+AURIX修改工程名称.bat
+AURIX修改工程名称教程.txt
+删除临时文件.bat
 
-# �ĵ�/�ʼ�
+# 文档/笔记
 BUG_ANALYSIS_assert_error.md
 history_202604081832.md
-RAM����.txt
-TODO_choose����Խ��.md
-������鱨��.md
-�ο����ٴ��루С������.txt
-������Ҫʹ�õ�����.txt
-��ʵʩ�ĸĽ�.md
-�Ƽ�IO����.txt
-�������Ż���¼.md
-Զ��Ѱ�߲���.md
-��͸��.txt
-��·���Ͳ���_�˹���ת_��ת��ʱ��ʾ��ȷ��·.txt
+RAM分配.txt
+TODO_choose数组越界.md
+代码审查报告.md
+参考跟踪代码（小赛道）.txt
+尽量不要使用的引脚.txt
+待实施的改进.md
+推荐IO分配.txt
+误差计算优化记录.md
+远端寻线策略.md
+逆透视.txt
+道路类型测试_人工右转_在转弯时显示正确道路.txt

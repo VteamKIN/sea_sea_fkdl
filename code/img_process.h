@@ -48,6 +48,7 @@ typedef enum RUN_Dir
 // 路口类型枚举
 enum JunctionType {
     JUNCTION_NONE = 0,      // 无路口
+    JUNCTION_CURVE,         // 弯道/路口（边线端点到达图像边界）
     JUNCTION_LEFT,          // 左直角（前方死路，必须左转）
     JUNCTION_RIGHT,         // 右直角（前方死路，必须右转）
     JUNCTION_LEFT_T,        // 左T字（前方有路+左侧有路，可直行也可左转）
@@ -69,17 +70,14 @@ enum JunctionType {
 // 200 fps (5ms/帧) 标准参数集
 #define JUNCTION_STABLE_THRESHOLD  3        // 路口检测防抖（进弯+退弯双向防抖）
 
-// Yaw 驱动退弯参数（双阈值 + 视觉确认）
-#define MIN_CURVE_YAW_DEG       75.0f      // 主阈值：达到后等 junction 视觉退出才正常退弯
-                                           // 防止半途循错边线
-#define FORCE_CURVE_YAW_DEG     95.0f      // 强制阈值：yaw 达此值仍 junction=1 → 紧贴弯道
-                                           // 直接切 latched_dir 进入下一弯（不经过 STRAIGHT）
-#define CURVE_TIMEOUT_FRAMES    160        // CURVE 超时(帧)：800ms  200fps
-                                           // 防反馈环（误进弯 → 循边线 → junction 持续触发）
-#define EXIT_STRAIGHT_FRAMES    3          // 直行通过 T 字路口：保持 N 帧后退弯
-#define CURVE_MIN_HOLD_FRAMES   5
-#define YAW_COMPLETE_STABLE_FRAMES 3
-#define STRAIGHT_T_YAW_LIMIT_DEG 12.0f
+// Yaw 驱动退弯参数
+#define MIN_CURVE_YAW_DEG       75.0f      // 主阈值：yaw 累计达此值退弯
+#define CURVE_TIMEOUT_FRAMES    160        // CURVE 超时(帧)：800ms @200fps
+#define CURVE_MIN_HOLD_FRAMES   5          // 进弯后最少保持帧数
+#define YAW_COMPLETE_STABLE_FRAMES 3       // yaw 达标后连续确认帧数
+
+// 十字路口直行穿越参数
+#define CROSS_IGNORE_PULSES_DEFAULT  500    // 默认穿越忽略窗口（编码器脉冲累计值）
 
 // 边线斜率突变检测（方案 E）：过滤倾斜直道误识别为路口
 // 原理：直道（含倾斜）边线沿自身斜率恒定无突变；真路口边线在某点急转，斜率突变大
@@ -137,8 +135,8 @@ extern vuint8 right_edge_count;       // 右边线点数
 // --- 道路类型识别变量 ---
 #define road_num 20
 extern vuint8  dir_count;             // 当前弯道序号(0~19)
-extern int8   choose[road_num];              // 弯道方向选择 0:循左线 1:循右线 -1:停止
-extern uint16 curve_lockout_ms[road_num];   // 每个弯道退弯后锁定帧数（独立设置）
+extern int8   choose[road_num];              // 方向选择 0:循左线 1:循右线 2:直行穿越 -1:停止
+extern int16  cross_ignore_pulses;           // 十字直行忽略窗口（编码器脉冲，可调参）
 extern vint8 current_target_dir;      // 当前循线方向(choose[dir_count]的缓存)
 extern volatile RUN_Dir road_type;            // 道路类型 straight/left/right
 extern vuint8 dir_advance_pending;    // dir_count 推进事件信号：detect_road_type 退弯瞬间设 1，control.c 处理后清 0

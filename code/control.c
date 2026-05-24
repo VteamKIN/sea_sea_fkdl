@@ -49,7 +49,7 @@ vint16 left_speed = 0;                      // 左轮速度
 vint16 right_speed = 0;                     // 右轮速度
 
 // Pure Pursuit 参数
-int16  pursuit_lookahead = 40;              // 前瞻取边线第 N 个点（索引，0=底部最近）
+int16  pursuit_lookahead = 65;              // 前瞻取边线第 N 个点（索引，0=底部最近）
 int16  pursuit_inward_bias = 3;             // 弯道内偏量（像素，循单边时朝内侧偏置）
 
 // speed_change 调参

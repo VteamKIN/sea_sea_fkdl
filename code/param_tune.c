@@ -39,27 +39,8 @@ static const param_entry_t g_params[] =
     { "ki",  &ki,  PT_FLOAT, 0 },
     { "kd",  &kd,  PT_FLOAT, 0 },
 
-    // 弯道独立锁定时间数组（lockout0 ~ lockout19）
-    { "lockout0",  curve_lockout_ms, PT_U16_ARR,  0 },
-    { "lockout1",  curve_lockout_ms, PT_U16_ARR,  1 },
-    { "lockout2",  curve_lockout_ms, PT_U16_ARR,  2 },
-    { "lockout3",  curve_lockout_ms, PT_U16_ARR,  3 },
-    { "lockout4",  curve_lockout_ms, PT_U16_ARR,  4 },
-    { "lockout5",  curve_lockout_ms, PT_U16_ARR,  5 },
-    { "lockout6",  curve_lockout_ms, PT_U16_ARR,  6 },
-    { "lockout7",  curve_lockout_ms, PT_U16_ARR,  7 },
-    { "lockout8",  curve_lockout_ms, PT_U16_ARR,  8 },
-    { "lockout9",  curve_lockout_ms, PT_U16_ARR,  9 },
-    { "lockout10", curve_lockout_ms, PT_U16_ARR, 10 },
-    { "lockout11", curve_lockout_ms, PT_U16_ARR, 11 },
-    { "lockout12", curve_lockout_ms, PT_U16_ARR, 12 },
-    { "lockout13", curve_lockout_ms, PT_U16_ARR, 13 },
-    { "lockout14", curve_lockout_ms, PT_U16_ARR, 14 },
-    { "lockout15", curve_lockout_ms, PT_U16_ARR, 15 },
-    { "lockout16", curve_lockout_ms, PT_U16_ARR, 16 },
-    { "lockout17", curve_lockout_ms, PT_U16_ARR, 17 },
-    { "lockout18", curve_lockout_ms, PT_U16_ARR, 18 },
-    { "lockout19", curve_lockout_ms, PT_U16_ARR, 19 },
+    // 十字路口穿越参数
+    { "cross", &cross_ignore_pulses,  PT_I16, 0 },   // 十字直行忽略窗口(编码器脉冲)
 };
 
 #define PARAM_COUNT  (sizeof(g_params) / sizeof(g_params[0]))

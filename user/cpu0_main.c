@@ -39,17 +39,6 @@ int core0_main(void)
             //printf("%d\n", error_image);
             // 示例见文件尾 DEBUG 区）
             //tft_show_warp_with_boundary();
-            /*
-            tft180_show_int(0, 20, dir_count, 2);
-            tft180_show_int(0, 40, dir_count, 2);
-            tft180_show_int(0, 60, dir_count, 2);
-            tft180_show_int(30, 20, dir_count, 2);
-            tft180_show_int(30, 40, dir_count, 2);
-            tft180_show_int(30, 60, dir_count, 2);
-            tft180_show_int(60, 20, dir_count, 2);
-            tft180_show_int(60, 40, dir_count, 2);
-            tft180_show_int(60, 60, dir_count, 2);
-            */
             //tft_show_warp_with_boundary();
             __dsync();
             cpu1_img_ready_flag = 0;

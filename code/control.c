@@ -255,6 +255,29 @@ void control_process(void)
     // 电机控制
     motor_control(control_base_speed + output, control_base_speed - output);
 
+    // ===== 堵转保护停车 =====
+    {
+        static uint16 stall_frames = 0;
+        int16 abs_enc = encoder_data_l;
+        if (abs_enc < 0) abs_enc = -abs_enc;
+        int16 abs_enc_r = encoder_data_r;
+        if (abs_enc_r < 0) abs_enc_r = -abs_enc_r;
+        int16 enc_sum = abs_enc + abs_enc_r;
+
+        if (enc_sum <= STALL_MAX_ENCODER)
+        {
+            if (stall_frames < 65535) stall_frames++;
+            if (stall_frames >= STALL_STOP_FRAMES)
+            {
+                car_running = 0;
+            }
+        }
+        else
+        {
+            stall_frames = 0;
+        }
+    }
+
     dir_advance_pending = 0;
     uint16 time2 = system_getval_us();
     process_time = time2 - time1;

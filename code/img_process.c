@@ -1047,6 +1047,25 @@ void detect_road_type(void)
             }
         }
     }
+
+    // ===== 丢线保护停车 =====
+    {
+        static uint16 line_lost_frames = 0;
+        uint8 both_lost = (left_edge_count < LINE_LOST_MIN_POINTS &&
+                           right_edge_count < LINE_LOST_MIN_POINTS) ? 1 : 0;
+        if (both_lost)
+        {
+            if (line_lost_frames < 65535) line_lost_frames++;
+            if (line_lost_frames >= LINE_LOST_STOP_FRAMES)
+            {
+                car_running = 0;
+            }
+        }
+        else
+        {
+            line_lost_frames = 0;
+        }
+    }
 }
 
 //===================================================================================================================

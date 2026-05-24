@@ -20,6 +20,10 @@ extern int16 control_base_speed;            // 基础速度
 #define OUTPUT_LIMIT               8000     // 输出限幅值
 #define CONTROL_SPEED_MAX          8000     // 控制模块最大速度
 
+// 堵转保护停车
+#define STALL_MAX_ENCODER          3        // 编码器绝对值和低于此值视为堵转
+#define STALL_STOP_FRAMES          30       // 连续堵转帧数达到此值则停车（~300ms @100fps）
+
 // ============================================================
 // 偏差计算参数
 // ============================================================

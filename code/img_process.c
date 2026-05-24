@@ -7,8 +7,6 @@
  */
 
 #include "zf_common_headfile.h"
-#include "imu.h"
-#include <math.h>
 
 // ============================================================
 // 将图像处理相关变量放入 CPU1 数据RAM）

@@ -49,12 +49,6 @@ typedef enum RUN_Dir
 enum JunctionType {
     JUNCTION_NONE = 0,      // 无路口
     JUNCTION_CURVE,         // 弯道/路口（边线端点到达图像边界）
-    JUNCTION_LEFT,          // 左直角（前方死路，必须左转）
-    JUNCTION_RIGHT,         // 右直角（前方死路，必须右转）
-    JUNCTION_LEFT_T,        // 左T字（前方有路+左侧有路，可直行也可左转）
-    JUNCTION_RIGHT_T,       // 右T字（前方有路+右侧有路，可直行也可右转）
-    JUNCTION_T,             // 标准T字路口（左右都有路）
-    JUNCTION_CROSS          // 十字路口
 };
 
 // ============================================================
@@ -68,7 +62,7 @@ enum JunctionType {
 
 
 // 200 fps (5ms/帧) 标准参数集
-#define JUNCTION_STABLE_THRESHOLD  3        // 路口检测防抖（进弯+退弯双向防抖）
+#define JUNCTION_STABLE_THRESHOLD  2        // 路口检测防抖（进弯+退弯双向防抖）
 
 // Yaw 驱动退弯参数
 #define MIN_CURVE_YAW_DEG       75.0f      // 主阈值：yaw 累计达此值退弯
@@ -77,7 +71,7 @@ enum JunctionType {
 #define YAW_COMPLETE_STABLE_FRAMES 3       // yaw 达标后连续确认帧数
 
 // 十字路口直行穿越参数
-#define CROSS_IGNORE_PULSES_DEFAULT  500    // 默认穿越忽略窗口（编码器脉冲累计值）
+#define CROSS_IGNORE_PULSES_DEFAULT  2050    // 默认穿越忽略窗口（编码器脉冲累计值）
 
 // 边线斜率突变检测（方案 E）：过滤倾斜直道误识别为路口
 // 原理：直道（含倾斜）边线沿自身斜率恒定无突变；真路口边线在某点急转，斜率突变大
@@ -103,6 +97,10 @@ enum JunctionType {
 
 // 边线回折截断阈值
 #define EDGE_FOLD_THRESHOLD       4        // 连续y递增超过此点数视为回折，截断后续点
+
+// 元器件中空间隙跨越（起点检测用）
+#define ELEMENT_GAP_MAX_DEFAULT   15       // 起点检测允许跨越的最大暗间隙(像素)
+                                           // 元器件中空宽度通常 < 路宽的 3/4
 
 // 丢线保护停车
 #define LINE_LOST_MIN_POINTS      3        // 边线点数低于此值视为丢线

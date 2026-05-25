@@ -40,6 +40,7 @@
 // 对于TC系列默认是不支持中断嵌套的，希望支持中断嵌套需要在中断内使用 enableInterrupts(); 来开启中断嵌套
 // 简单点说实际上进入中断后TC系列的硬件自动调用了 disableInterrupts(); 来拒绝响应任何的中断，因此需要我们自己手动调用 enableInterrupts(); 来开启中断的响应。
 
+int cross_encoder_accum = 0;
 // **************************** PIT定时中断 ****************************
 IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
 {
@@ -52,7 +53,7 @@ IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
     //R_control(1000);
     // 闭环控制
     //control_process();
-
+    cross_encoder_accum += (int32)(encoder_data_l + encoder_data_r) / 2;
     // 角度环控制
     // if (angle_loop_enable)
     // {

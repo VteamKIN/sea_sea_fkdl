@@ -32,7 +32,7 @@ vuint8 right_edge_count = 0;         // 右边线点数
 
 vuint8  dir_count = 0;               // 当前弯道序号(0~19)
 static uint8 last_junction_detected = 0;  // 上一帧 junction_detected（用于检测上升沿）
-int8  choose[road_num] = {0,0,0,0,1,0,1,1,0,-1};  // 方向选择 0:循左线 1:循右线 2:直行穿越 -1:停止
+int8  choose[road_num] = {1,0,0,-1}; // 方向选择 0:循左线 1:循右线 2:直行穿越 -1:停止
 int16 cross_ignore_pulses = CROSS_IGNORE_PULSES_DEFAULT; // 十字直行忽略窗口（编码器脉冲累计）
 vint8 current_target_dir = 0;        // 当前循线方向(choose[dir_count]的缓存)
 vuint8 dir_advance_pending = 0;      // dir_count 推进事件信号（detect_road_type 退弯瞬间设 1，control.c 处理后清 0）
@@ -216,36 +216,51 @@ static void find_start_point_warp(const uint8 *img_data, int img_w, int img_h,
         const uint8 *row = img_data + (sample_start_y + i) * img_w;// 单行对应列的像素值
         uint8 row_thres = row_thres_buf[i];
 
-        int rs = -1, rl = 0;// 当前亮段的起始 x 坐标和长度
         int b_start = -1, b_len = 0, b_dist = img_w;
+
+        // 间隙跨越扫描：允许小暗间隙（元器件中空）不打断区间
+        int gap_max = (road_width_avg > 10) ? (int)(road_width_avg * 3 / 4) : ELEMENT_GAP_MAX_DEFAULT;
+        int rs = -1;    // 区间起始 x
+        int re = -1;    // 区间最后一个白像素 x
+        int gap = 0;    // 当前连续暗像素计数
 
         for (int x = 0; x < img_w; x++)
         {
-            if (row[x] > row_thres)// 找第一个大于阈值的点 更新rl
+            if (row[x] > row_thres)
             {
                 if (rs == -1) rs = x;
-                rl++;
+                re = x;
+                gap = 0;
             }
-            else
+            else if (rs != -1)
             {
-                if (rl >= NARROW_WIDTH_MIN)// 道路宽度判断，大于才取
+                gap++;
+                if (gap > gap_max)
                 {
-                    int rc = rs + rl / 2;// 计算道路的中心
-                    int d = rc - last_center;// 偏移量
-                    if (d < 0) d = -d;
-                    if (d < b_dist) { b_dist = d; b_start = rs; b_len = rl; }//道路中心的合法判断
+                    // 间隙过大，结算当前区间
+                    int span = re - rs + 1;
+                    if (span >= NARROW_WIDTH_MIN)
+                    {
+                        int rc = (rs + re) / 2;
+                        int d = rc - last_center;
+                        if (d < 0) d = -d;
+                        if (d < b_dist) { b_dist = d; b_start = rs; b_len = span; }
+                    }
+                    rs = -1; re = -1; gap = 0;
                 }
-                rs = -1;
-                rl = 0;
             }
         }
-        // 处理行尾亮段 亮段一直延伸到最后
-        if (rl >= NARROW_WIDTH_MIN)
+        // 处理行尾区间
+        if (rs != -1)
         {
-            int rc = rs + rl / 2;
-            int d = rc - last_center;
-            if (d < 0) d = -d;
-            if (d < b_dist) { b_start = rs; b_len = rl; }
+            int span = re - rs + 1;
+            if (span >= NARROW_WIDTH_MIN)
+            {
+                int rc = (rs + re) / 2;
+                int d = rc - last_center;
+                if (d < 0) d = -d;
+                if (d < b_dist) { b_start = rs; b_len = span; }
+            }
         }
 
         if (b_start != -1)
@@ -306,16 +321,32 @@ static void find_start_point_warp(const uint8 *img_data, int img_w, int img_h,
             uint8 t = (uint8)(((uint16)row_min + (uint16)row_max) / 2);
             if (t > ROAD_THRES_CLIP) t = (uint8)(t - ROAD_THRES_CLIP);
 
-            int rs = -1, b_start = -1, b_len = 0, rl = 0;
+            int b_start = -1, b_len = 0;
+            int fb_gap_max = (road_width_avg > 10) ? (int)(road_width_avg * 3 / 4) : ELEMENT_GAP_MAX_DEFAULT;
+            int rs = -1, re = -1, fb_gap = 0;
             for (int x = 0; x < img_w; x++)
             {
                 if (row[x] > t)
                 {
                     if (rs == -1) rs = x;
-                    rl++;
-                    if (rl > b_len) { b_len = rl; b_start = rs; }
+                    re = x;
+                    fb_gap = 0;
                 }
-                else { rs = -1; rl = 0; }
+                else if (rs != -1)
+                {
+                    fb_gap++;
+                    if (fb_gap > fb_gap_max)
+                    {
+                        int span = re - rs + 1;
+                        if (span > b_len) { b_len = span; b_start = rs; }
+                        rs = -1; re = -1; fb_gap = 0;
+                    }
+                }
+            }
+            if (rs != -1)
+            {
+                int span = re - rs + 1;
+                if (span > b_len) { b_len = span; b_start = rs; }
             }
             if (b_len >= NARROW_WIDTH_MIN)
             {
@@ -454,6 +485,7 @@ void zi_shi_ying_warp(void)
             break;
         }
     }
+
 }
 
 //===================================================================================================================
@@ -602,7 +634,9 @@ void findline_righthand_adaptive(image_t *img, int block_size, int clip_value, i
 static uint8 detect_single_edge_slope_mutation(int16 edge[][2], uint8 edge_count)
 {
     if (edge_count < EDGE_MIN_POINTS)
+    {
         return 0;
+    }
 
     for (int base = 0; base + EDGE_SLOPE_FAR_IDX_HI < edge_count; base += 2)
     {
@@ -652,6 +686,9 @@ void detect_junction_type(void)
     if (edge_start_lost)
         return;
 
+    // 斜率突变检测（区分真弯道与倾斜直道）
+    detect_edge_slope_mutation();
+
     // 检测最后一个边线点的x坐标是否到达图像边界 → 弯道
     uint8 curve_detected = 0;
 
@@ -668,6 +705,10 @@ void detect_junction_type(void)
         if (x <= 2 || x >= WARP_IMAGE_W - 3)
             curve_detected = 1;
     }
+
+    // 边线到达边界 且 有斜率突变 → 真弯道；否则可能是倾斜直道
+    if (curve_detected && !(left_slope_mutation || right_slope_mutation))
+        curve_detected = 0;
 
     enum JunctionType raw_junction = curve_detected ? JUNCTION_CURVE : JUNCTION_NONE;
     raw_junction_debug = raw_junction;

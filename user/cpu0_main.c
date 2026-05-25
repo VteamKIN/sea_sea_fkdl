@@ -1,5 +1,5 @@
 #include "zf_common_headfile.h"
-
+#include "isr.h"
 #pragma section all "cpu0_dsram"
 // 将本语句与 #pragma section all restore 语句之间的全局变量都放在CPU0的RAM中
 
@@ -14,7 +14,7 @@ int core0_main(void)
     cpu_wait_event_ready();         // 等待所有核心初始化完毕
 
     // 先启动负压风扇，等待负压建立后再允许轮子控制
-    fan_set(3000);
+    //fan_set(4000);
     system_delay_ms(1000);           // 等待 1000ms 让负压建立
     control_enable_flag = 1;        // 允许 ISR 中的 control_process() 执行
 
@@ -31,15 +31,19 @@ int core0_main(void)
         if (cpu1_img_ready_flag)
         {
 
-            //tft180_show_int(100, 85, img_process_time, 4);
+            tft180_show_int(100, 85, img_process_time, 4);
 
-            //tft180_show_int(0,0,left_slope_mutation,1);
-            //tft180_show_int(20,0,right_slope_mutation,1);
-            //tft180_show_int(50, 0, yaw_angle, 3);
+            //tft180_show_int(0,110,cross_encoder_accum,4);
+            //tft180_show_int(0,90,junction_detected,1);
+
+
+            //tft180_show_int(0,90,left_slope_mutation,1);
+            //tft180_show_int(0,110,right_slope_mutation,1);
+
+            //tft180_show_int(20, 90, raw_junction_debug, 1);
             //printf("%d\n", error_image);
             // 示例见文件尾 DEBUG 区）
-            //tft_show_warp_with_boundary();
-            //tft_show_warp_with_boundary();
+            tft_show_warp_with_boundary();
             __dsync();
             cpu1_img_ready_flag = 0;
         }

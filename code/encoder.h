@@ -16,11 +16,8 @@
 #include "zf_common_headfile.h"
 
 // 编码器参数定义
-#define ENCODER_PPR         500     // 编码器每转脉冲数
-#define SAMPLE_TIME_MS       100     // 采样时间100ms
 #define SPEED_MAX          8000    // 最大速度输出
 #define SPEED_MIN         -8000    // 最小速度输出
-#define INTEGRAL_LIMIT      2000    // 积分限幅
 
 // 编码器方向枚举
 typedef enum

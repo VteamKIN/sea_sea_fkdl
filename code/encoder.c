@@ -127,6 +127,23 @@ static int16 constrain(int16 value, int16 min_val, int16 max_val)
 
 
 
+static void Encoder_PID_Reset_State(Encoder_PID_t *pid)
+{
+    pid->TargetSpeed = 0;
+    pid->ActualSpeed = 0;
+    pid->Err = 0;
+    pid->ErrLast = 0;
+    pid->ErrPrev = 0;
+    pid->Integral = 0;
+    pid->Output = 0;
+    pid->OutputLast = 0;
+}
+
+void encoder_speed_pid_reset(void)
+{
+    Encoder_PID_Reset_State(&L_PID);
+    Encoder_PID_Reset_State(&R_PID);
+}
 //--------------------------------------------------------------------------------------
 // 函数：左轮速度控制
 // 参数：target_speed - 目标转速(rpm)
@@ -198,6 +215,13 @@ void R_control(int16 target_speed)
 //--------------------------------------------------------------------------------------
 void motor_control(int16 left_speed, int16 right_speed)
 {
+    if (left_speed == 0 && right_speed == 0)
+    {
+        encoder_speed_pid_reset();
+        motor_set(0, 0);
+        return;
+    }
+
     L_control(left_speed);
     R_control(right_speed);
 }

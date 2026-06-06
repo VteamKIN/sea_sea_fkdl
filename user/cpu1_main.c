@@ -28,9 +28,10 @@ void core1_main(void)
 
     cpu_wait_event_ready();                 // 等待所有核心初始化完毕
 
-    car_running = 1;                        // 初始化运行状态
+    car_running = 0;                        // wait for KEY3 launch
 
     // 启动 4ms PIT 定时器，图像处理 + 控制闭环在 CCU61_CH1 ISR 中完成
+
     pit_ms_init(CCU61_CH1, 4);
 
     while (TRUE)

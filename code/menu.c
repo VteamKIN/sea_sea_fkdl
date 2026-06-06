@@ -1,422 +1,265 @@
 /*
  * menu.c
- * PID参数调节菜单实现
- * 一套PID
- * Created on: 2026年3月14日
- *      Author: aaa
+ * 参数组快速切换菜单
+ * 仅在发车前使用：KEY1/KEY2 切换参数组，KEY3 发车并锁定菜单
  */
 
 #include "zf_common_headfile.h"
 
-/*******************************************************************************
- * 菜单参数定义
- *******************************************************************************/
+#define MENU_FIXED_PROFILE_COUNT 6
+#define MENU_PROFILE_COUNT       (1 + MENU_FIXED_PROFILE_COUNT)
 
-// 参数调节步长
-#define KP_STEP  0.5f
-#define KI_STEP  0.01f
-#define KD_STEP  0.5f
+/* 单个参数组：保存发车前可以安全切换的运行参数。 */
+typedef struct
+{
+    const char *name;
+    float kp_value;
+    float ki_value;
+    float kd_value;
+    int16 base_speed;
+    int16 lookahead;
+    int16 error_limit;
+    int16 inward_bias;
+    int16 cross_pulses;
+    int16 curve_exit_pulses;
+    uint8 line_lost_enable;
+    uint8 choose_len;
+    int8 choose_values[road_num];
+} menu_profile_t;
 
-// 主菜单枚举
-typedef enum {
-    MENU_MAIN_STATUS = 0,
-    MENU_MAIN_PID,
-    MENU_MAIN_CHOOSE,
-    MENU_MAIN_COUNT
-} menu_main_t;
+static uint8 current_profile_index = 0;
+static menu_profile_t current_profile;
+static uint8 current_profile_ready = 0;
+static uint8 menu_locked_after_launch = 0;  // KEY3 发车后置 1，运行中菜单不再响应按键。
 
-// 菜单层级
-typedef enum {
-    MENU_PAGE_MAIN = 0,
-    MENU_PAGE_STATUS,
-    MENU_PAGE_PID,
-    MENU_PAGE_CHOOSE,
-    MENU_PAGE_COUNT
-} menu_page_t;
-
-// PID参数枚举
-typedef enum {
-    MENU_KP = 0,
-    MENU_KI,
-    MENU_KD,
-    MENU_PARAM_COUNT
-} menu_state_t;
-
-// 菜单变量
-static menu_main_t current_main = MENU_MAIN_STATUS;
-static menu_page_t current_page = MENU_PAGE_MAIN;
-static menu_state_t current_param = MENU_KP;
-static uint8 choose_cursor = 0;        // CHOOSE 页面当前编辑位置 0~(road_num-1)
-
-// 函数前向声明
-static void menu_show_main_list(void);
-static void menu_show_status(void);
-static void menu_show_choose(void);
-static void handle_main_key(void);
-static void handle_status_key(void);
-static void handle_pid_key(void);
-static void handle_choose_key(void);
-static float* get_current_param_ptr(void);
-static float get_current_step(void);
-void menu_show_pid(void);
-
-typedef struct {
-    void (*show)(void);
-    void (*handle_key)(void);
-} menu_page_handler_t;
-
-static const menu_page_handler_t menu_pages[MENU_PAGE_COUNT] = {
-    { menu_show_main_list, handle_main_key },
-    { menu_show_status, handle_status_key },
-    { menu_show_pid, handle_pid_key },
-    { menu_show_choose, handle_choose_key }
+/* 固定参数组  索引 0 保留给 Current 当前参数。 */
+static const menu_profile_t fixed_profiles[MENU_FIXED_PROFILE_COUNT] =
+{
+    {
+        "1500 Qual",
+        18.0f, 0.02f, 0.0f,
+        1500, 85, 50, 3,
+        3200, 1000,
+        0,
+        18,
+        {0,1,1,1,1,1,1,0,1,0,0,0,1,1,0,0,0,-1}
+    },
+    {
+        "2000 Qual",
+        23.0f, 0.00f, 0.0f,
+        2000, 120, 50, -3,
+        2500, 1000,
+        0,
+        18,
+        {0,1,1,1,1,1,1,0,1,0,0,0,1,1,0,0,0,-1}
+    },
+    {
+        "2300 Qual",
+        19.0f, 0.00f, 13.6f,
+        2300, 120, 60, -3,
+        2500, 1000,
+        1,
+        18,
+        {0,1,1,1,1,1,1,0,1,0,0,0,1,1,0,0,0,-1}
+    },
+    {
+        "2500 Qual",
+        23.0f, 0.00f, 13.6f,
+        2500, 120, 100, -3,
+        2500, 1000,
+        1,
+        18,
+        {0,1,1,1,1,1,1,0,1,0,0,0,1,1,0,0,0,-1}
+    },
+    {
+        "1500 Final",
+        18.0f, 0.02f, 0.0f,
+        1500, 85, 50, 3,
+        3200, 1000,
+        0,
+        30,
+        {1,1,0,2,3,1,0,1,1,0,1,2,0,1,0,1,1,1,3,1,1,0,0,0,2,2,1,1,0,-1}
+    },
+    {
+        "2300 Final",
+        19.0f, 0.00f, 13.6f,
+        2300, 120, 60, -3,
+        3200, 1000,
+        0,
+        25,
+        {1,1,0,2,3,1,0,1,1,0,1,2,0,1,0,1,1,1,3,1,1,0,0,0,2,2,1,1,0,-1}
+    }
 };
 
-/*******************************************************************************
- * 显示主菜单列表
- *******************************************************************************/
-static void menu_show_main_list(void)
+/* 根据屏幕索引取得参数组指针；0 表示启动时捕获的当前工程参数。 */
+static const menu_profile_t *menu_get_profile(uint8 index)
 {
-    tft180_clear();
-
-    tft180_show_string(60, 5, "MENU");
-
-    tft180_show_string(5, 25, "1.Status");
-    tft180_show_string(90, 25, car_running ? "RUN" : "STOP");
-    if (current_main == MENU_MAIN_STATUS)
+    if (index == 0)
     {
-        tft180_show_string(140, 25, "<");
+        return &current_profile;
     }
-
-    tft180_show_string(5, 50, "2.PID");
-    tft180_show_string(90, 50, "Adjust");
-    if (current_main == MENU_MAIN_PID)
-    {
-        tft180_show_string(140, 50, "<");
-    }
-
-    tft180_show_string(5, 75, "3.Choose");
-    tft180_show_string(90, 75, "Path");
-    if (current_main == MENU_MAIN_CHOOSE)
-    {
-        tft180_show_string(140, 75, "<");
-    }
-
-    tft180_show_string(5, 105, "K1/K2 Sel  K3 Enter");
-
+    return &fixed_profiles[index - 1];
 }
 
-/*******************************************************************************
- * 显示当前运行状态
- *******************************************************************************/
-static void menu_show_status(void)
+/* 只在启动时快照一次当前工程参数，后续可切回 Current。 */
+static void menu_capture_current_profile(void)
 {
-    tft180_clear();
+    if (current_profile_ready)
+    {
+        return;
+    }
 
-    tft180_show_string(50, 5, "STATUS");
+    current_profile.name = "Current";
+    current_profile.kp_value = kp;
+    current_profile.ki_value = ki;
+    current_profile.kd_value = kd;
+    current_profile.base_speed = control_base_speed;
+    current_profile.lookahead = pursuit_lookahead;
+    current_profile.error_limit = error_limit;
+    current_profile.inward_bias = pursuit_inward_bias;
+    current_profile.cross_pulses = cross_ignore_pulses;
+    current_profile.curve_exit_pulses = curve_exit_ignore_pulses;
+    current_profile.line_lost_enable = line_lost_protect_enable;
+    current_profile.choose_len = road_num;
 
-    tft180_show_string(5, 25, "Car:");
-    tft180_show_string(40, 25, car_running ? "RUN" : "STOP");
+    for (uint8 i = 0; i < road_num; i++)
+    {
+        current_profile.choose_values[i] = choose[i];
+    }
 
-    tft180_show_string(5, 45, "Kp:");
-    tft180_show_float(30, 45, kp, 3, 1);
-
-    tft180_show_string(5, 60, "Ki:");
-    tft180_show_float(30, 60, ki, 3, 2);
-
-    tft180_show_string(5, 75, "Kd:");
-    tft180_show_float(30, 75, kd, 3, 1);
-
-    tft180_show_string(5, 95, "K2 Start/Stop");
-    tft180_show_string(5, 110, "K4 Back to Menu");
-
+    current_profile_ready = 1;
 }
 
-/*******************************************************************************
- * 显示PID参数
- *******************************************************************************/
-void menu_show_pid(void)
+/* 切换参数组或发车前重置路径和控制状态。 */
+static void menu_reset_road_state(void)
 {
-    tft180_clear();
-
-    tft180_show_string(5, 5, "--- PID ---");
-    tft180_show_string(5, 20, "Kp:");
-    tft180_show_float(35, 20, kp, 3, 1);
-    if (current_param == MENU_KP)
-    {
-        tft180_show_string(90, 20, "<");
-    }
-
-    tft180_show_string(5, 35, "Ki:");
-    tft180_show_float(35, 35, ki, 3, 2);
-    if (current_param == MENU_KI)
-    {
-        tft180_show_string(90, 35, "<");
-    }
-
-    tft180_show_string(5, 50, "Kd:");
-    tft180_show_float(35, 50, kd, 3, 1);
-    if (current_param == MENU_KD)
-    {
-        tft180_show_string(90, 50, "<");
-    }
-
-    tft180_show_string(5, 80, "K1 Next Param");
-    tft180_show_string(5, 95, "K2 Inc  K3 Dec");
-    tft180_show_string(5, 110, "K4 Back to Menu");
-
+    dir_count = 0;
+    dir_advance_pending = 0;
+    dir_advance_count = 0;
+    current_target_dir = choose[0];
+    road_type = straight;
+    current_junction = JUNCTION_NONE;
+    raw_junction_debug = JUNCTION_NONE;
+    junction_detected = 0;
+    cross_active = 0;
+    control_line_lost_reset();
+    control_pid_reset();
 }
 
-/*******************************************************************************
- * 菜单初始化
- *******************************************************************************/
+/* 将选中的参数组写入控制和图像处理正在使用的全局变量。 */
+static void menu_apply_profile(const menu_profile_t *profile)
+{
+    kp = profile->kp_value;
+    ki = profile->ki_value;
+    kd = profile->kd_value;
+    control_base_speed = profile->base_speed;
+    pursuit_lookahead = profile->lookahead;
+    error_limit = profile->error_limit;
+    pursuit_inward_bias = profile->inward_bias;
+    cross_ignore_pulses = profile->cross_pulses;
+    curve_exit_ignore_pulses = profile->curve_exit_pulses;
+    line_lost_protect_enable = profile->line_lost_enable;
+
+    // 未使用的路径槽位填 -1，避免残留上一个参数组的方向。
+    for (uint8 i = 0; i < road_num; i++)
+    {
+        choose[i] = -1;
+    }
+
+    uint8 copy_len = profile->choose_len;
+    if (copy_len > road_num)
+    {
+        copy_len = road_num;
+    }
+
+    for (uint8 i = 0; i < copy_len; i++)
+    {
+        choose[i] = profile->choose_values[i];
+    }
+
+    menu_reset_road_state();
+    __dsync();
+}
+
+/* 按 8x16 字体行显示：y = 0,16,...,112，避免超过 128 像素高度。 */
+static void menu_show_profile(void)
+{
+    const menu_profile_t *profile = menu_get_profile(current_profile_index);
+
+    tft180_clear();
+    tft180_show_string(5, 0, "PARAM SET");
+
+    tft180_show_string(5, 16, "No:");
+    tft180_show_int(30, 16, (int)current_profile_index, 1);
+    tft180_show_string(50, 16, (char *)profile->name);
+
+    tft180_show_string(5, 32, "Kp:");
+    tft180_show_float(30, 32, kp, 3, 1);
+    tft180_show_string(85, 32, "Ki:");
+    tft180_show_float(110, 32, ki, 2, 2);
+
+    tft180_show_string(5, 48, "Kd:");
+    tft180_show_float(30, 48, kd, 3, 1);
+    tft180_show_string(85, 48, "V:");
+    tft180_show_int(105, 48, control_base_speed, 4);
+
+    tft180_show_string(5, 64, "LA:");
+    tft180_show_int(30, 64, pursuit_lookahead, 3);
+    tft180_show_string(75, 64, "Lim:");
+    tft180_show_int(110, 64, error_limit, 3);
+
+    tft180_show_string(5, 80, "Lost:");
+    tft180_show_string(50, 80, line_lost_protect_enable ? "ON" : "OFF");
+
+    tft180_show_string(5, 112, "K1/K2 Switch K3 Go");
+}
+/* 初始化启动菜单，并强制保持发车前停车状态。 */
 void menu_init(void)
 {
-    current_main = MENU_MAIN_STATUS;
-    current_page = MENU_PAGE_MAIN;
-    current_param = MENU_KP;
-
-    menu_pages[current_page].show();
+    menu_capture_current_profile();
+    current_profile_index = 0;
+    menu_apply_profile(menu_get_profile(current_profile_index));
+    car_running = 0;
+    menu_locked_after_launch = 0;
+    menu_show_profile();
 }
 
-/*******************************************************************************
- * 获取当前选中参数的指针
- *******************************************************************************/
-static float* get_current_param_ptr(void)
-{
-    switch (current_param)
-    {
-        case MENU_KP:
-            return &kp;
-        case MENU_KI:
-            return &ki;
-        case MENU_KD:
-            return &kd;
-        default:
-            return &kp;
-    }
-}
-
-//获取当前参数的步长
-static float get_current_step(void)
-{
-    switch (current_param)
-    {
-        case MENU_KI:
-            return KI_STEP;
-        case MENU_KP:
-            return KP_STEP;
-        case MENU_KD:
-            return KD_STEP;
-        default:
-            return KP_STEP;
-    }
-}
-
-/*******************************************************************************
- * 主菜单按键处理
- *******************************************************************************/
-static void handle_main_key(void)
-{
-    if (key_get_state(KEY_1) == KEY_SHORT_PRESS)
-    {
-        current_main = (menu_main_t)((current_main + MENU_MAIN_COUNT - 1) % MENU_MAIN_COUNT);
-        menu_show_main_list();
-    }
-
-    if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
-    {
-        current_main = (menu_main_t)((current_main + 1) % MENU_MAIN_COUNT);
-        menu_show_main_list();
-    }
-
-    if (key_get_state(KEY_3) == KEY_SHORT_PRESS)
-    {
-        if (current_main == MENU_MAIN_STATUS)
-        {
-            current_page = MENU_PAGE_STATUS;
-            menu_show_status();
-        }
-        else if (current_main == MENU_MAIN_PID)
-        {
-            current_page = MENU_PAGE_PID;
-            menu_show_pid();
-        }
-        else
-        {
-            current_page = MENU_PAGE_CHOOSE;
-            menu_show_choose();
-        }
-    }
-}
-
-/*******************************************************************************
- * 状态页面按键处理
- *******************************************************************************/
-static void handle_status_key(void)
-{
-    if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
-    {
-        car_running = !car_running;
-        if (!car_running)
-        {
-            motor_control(0, 0);
-        }
-        menu_show_status();
-    }
-
-    if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
-    {
-        current_page = MENU_PAGE_MAIN;
-        menu_show_main_list();
-    }
-}
-
-/*******************************************************************************
- * PID页面按键处理
- *******************************************************************************/
-static void handle_pid_key(void)
-{
-    if (key_get_state(KEY_1) == KEY_SHORT_PRESS)
-    {
-        current_param = (menu_state_t)((current_param + 1) % MENU_PARAM_COUNT);
-        menu_show_pid();
-    }
-
-    if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
-    {
-        *get_current_param_ptr() += get_current_step();
-        menu_show_pid();
-    }
-
-    if (key_get_state(KEY_3) == KEY_SHORT_PRESS)
-    {
-        *get_current_param_ptr() -= get_current_step();
-        menu_show_pid();
-    }
-
-    if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
-    {
-        current_page = MENU_PAGE_MAIN;
-        menu_show_main_list();
-    }
-}
-
-/*******************************************************************************
- * CHOOSE 页面：编辑 choose[] 路径数组
- * - 4x5 网格显示 20 个槽位，每个槽位 32 像素宽
- * - 当前光标位置用 [X] 标识，其它槽位为  X
- * - 值显示: L=循左(0) / R=循右(1) / S=停车(-1)
- *******************************************************************************/
-static char choose_value_char(int8 v)
-{
-    if (v == 0)  return 'L';
-    if (v == 1)  return 'R';
-    if (v == -1) return 'S';
-    return '?';
-}
-
-static void menu_show_choose(void)
-{
-    tft180_clear();
-
-    tft180_show_string(5, 5, "-- CHOOSE PATH --");
-
-    // 顶部状态行：当前光标位置 + 当前值
-    tft180_show_string(5, 22, "Idx:");
-    tft180_show_int(40, 22, (int)choose_cursor, 2);
-    tft180_show_string(75, 22, "Val:");
-    char vstr[2];
-    vstr[0] = choose_value_char(choose[choose_cursor]);
-    vstr[1] = '\0';
-    tft180_show_string(110, 22, vstr);
-
-    // 4x5 网格：每个 cell 32px 宽，16px 高
-    char cell[4];
-    for (int row = 0; row < 4; row++)
-    {
-        for (int col = 0; col < 5; col++)
-        {
-            int idx = row * 5 + col;
-            uint16 x = (uint16)(col * 32);
-            uint16 y = (uint16)(43 + row * 16);
-            char c = choose_value_char(choose[idx]);
-            if (idx == choose_cursor)
-            {
-                cell[0] = '[';
-                cell[1] = c;
-                cell[2] = ']';
-            }
-            else
-            {
-                cell[0] = ' ';
-                cell[1] = c;
-                cell[2] = ' ';
-            }
-            cell[3] = '\0';
-            tft180_show_string(x, y, cell);
-        }
-    }
-
-    tft180_show_string(5, 112, "K1Nx K2+ K3- K4Bk");
-}
-
-/*******************************************************************************
- * CHOOSE 页面按键处理
- * K1 光标后移   K2 值循环+   K3 值循环-   K4 返回
- *******************************************************************************/
-static void handle_choose_key(void)
-{
-    if (key_get_state(KEY_1) == KEY_SHORT_PRESS)
-    {
-        choose_cursor = (uint8)((choose_cursor + 1) % road_num);
-        menu_show_choose();
-    }
-
-    if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
-    {
-        // 值循环: -1 -> 0 -> 1 -> -1
-        int8 v = choose[choose_cursor];
-        if      (v == -1) v = 0;
-        else if (v ==  0) v = 1;
-        else              v = -1;
-        choose[choose_cursor] = v;
-        __dsync();    // 跨核可见性: choose[] 位于 cpu1_dsram
-        menu_show_choose();
-    }
-
-    if (key_get_state(KEY_3) == KEY_SHORT_PRESS)
-    {
-        // 值反向循环: -1 -> 1 -> 0 -> -1
-        int8 v = choose[choose_cursor];
-        if      (v == -1) v = 1;
-        else if (v ==  1) v = 0;
-        else              v = -1;
-        choose[choose_cursor] = v;
-        __dsync();
-        menu_show_choose();
-    }
-
-    if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
-    {
-        current_page = MENU_PAGE_MAIN;
-        menu_show_main_list();
-    }
-}
-
-/*******************************************************************************
- * 菜单处理函数
- *******************************************************************************/
+/* 仅启动前有效的按键处理；KEY3 发车后锁定菜单。 */
 void menu_process(void)
 {
-    if (current_page < MENU_PAGE_COUNT)
+    if (menu_locked_after_launch)
     {
-        if (menu_pages[current_page].handle_key != NULL)
-        {
-            menu_pages[current_page].handle_key();
-        }
+        key_clear_all_state();
+        return;
     }
-    // 清除所有按键状态，防止 menu_process 在主循环高频调用时
-    // 同一次 KEY_SHORT_PRESS 被重复响应（key_scanner 仅在按键释放时设置一次该状态）
+
+    if (!car_running && key_get_state(KEY_1) == KEY_SHORT_PRESS)
+    {
+        current_profile_index = (uint8)((current_profile_index + MENU_PROFILE_COUNT - 1) % MENU_PROFILE_COUNT);
+        menu_apply_profile(menu_get_profile(current_profile_index));
+        menu_show_profile();
+    }
+
+    if (!car_running && key_get_state(KEY_2) == KEY_SHORT_PRESS)
+    {
+        current_profile_index = (uint8)((current_profile_index + 1) % MENU_PROFILE_COUNT);
+        menu_apply_profile(menu_get_profile(current_profile_index));
+        menu_show_profile();
+    }
+
+    if (!car_running && key_get_state(KEY_3) == KEY_SHORT_PRESS)
+    {
+        menu_reset_road_state();
+        car_running = 1;
+        menu_locked_after_launch = 1;
+        tft180_clear();
+    }
+
     key_clear_all_state();
+}
+
+/* 兼容旧调试入口：旧代码可能仍会调用 menu_show_pid()。 */
+void menu_show_pid(void)
+{
+    menu_show_profile();
 }

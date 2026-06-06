@@ -23,9 +23,8 @@
 // ============================================================
 // 全局变量
 // ============================================================
-
 // PID 参数
-float kp = 20.0f;                           // PID 比例系数
+float kp = 12.0f;                           // PID 比例系数
 float ki = 0.00f;                           // PID 积分系数
 float kd = 0.0f;                            // PID 微分系数
 
@@ -44,13 +43,14 @@ static vint16 last_output = 0;              // 上一帧 PID 输出
 vint16 output = 0;                          // PID 输出（速度偏移量，限幅 ±OUTPUT_LIMIT）
 
 // 电机速度
-int16 control_base_speed = 1200;             //控制模块基础速度
+int16 control_base_speed = 2600;             //控制模块基础速度
 vint16 left_speed = 0;                      // 左轮速度
 vint16 right_speed = 0;                     // 右轮速度
 
 // Pure Pursuit 参数
-int16  pursuit_lookahead = 55;              // 前瞻取边线第 N 个点（索引，0=底部最近）
-int16  pursuit_inward_bias = 3;             // 弯道内偏量（像素，循单边时朝内侧偏置）
+int16  pursuit_lookahead = 200;              // 前瞻取边线第 N 个点（索引，0=底部最近）
+int16  pursuit_inward_bias = -3;             // 弯道内偏量（像素，循单边时朝内侧偏置）
+int16  error_limit = 100;                   // 图像偏差限幅
 
 // speed_change 调参
 int16 speed_change_step       = 10;     // LINEAR    每帧步长
@@ -65,6 +65,9 @@ float speed_change_alpha_near = 0.05f;  // TWO_STAGE 近端系数
 
 // 运行状态
 vint8 car_running = 1;                      // 1:运行  0:停车
+static uint8 lost_grace_count = 0;          // 丢线容忍帧计数
+uint8 line_lost_protect_enable = 1;         // 1: enable straight-line lost protection
+float vert_vel = 0.0f;                     // Y轴垂直速度 (m/s)，高度保护用
 
 // 调试 / 统计
 uint16 process_time = 0;                    // control_process 一次调用耗时（μs，调试观察用）
@@ -84,6 +87,11 @@ static int16 int_limit(int16 value, int16 limit)
     if (value > limit) return limit;
     if (value < -limit) return -limit;
     return value;
+}
+
+void control_line_lost_reset(void)
+{
+    lost_grace_count = 0;
 }
 
 //===================================================================================================================
@@ -141,12 +149,27 @@ void calc_error_image(void)
                 target_x = (int16)((Lx + Rx) / 2);
                 target_valid = 1;
             }
+            else if (left_ok)
+            {
+                target_x = Lx + inward_off;
+                target_valid = 1;
+            }
+            else if (right_ok)
+            {
+                target_x = Rx - inward_off;
+                target_valid = 1;
+            }
             break;
 
         case left:
             if (left_ok)
             {
                 target_x = Lx + inward_off;
+                target_valid = 1;
+            }
+            else if (right_ok)
+            {
+                target_x = Rx - inward_off;
                 target_valid = 1;
             }
             break;
@@ -157,14 +180,36 @@ void calc_error_image(void)
                 target_x = Rx - inward_off;
                 target_valid = 1;
             }
+            else if (left_ok)
+            {
+                target_x = Lx + inward_off;
+                target_valid = 1;
+            }
             break;
     }
 
     if (!target_valid)
     {
-        // 丢线 → 维持上一帧偏差不变
+        // 弯道或十字穿越中短暂丢线：维持上一帧偏差，不计入停车计数
+        if (road_type != straight || cross_active)
+        {
+            return;
+        }
+        if (!line_lost_protect_enable)
+        {
+            lost_grace_count = 0;
+            return;
+        }
+        // 直道丢线 → 超过容忍帧数则停车
+        lost_grace_count++;
+        if (lost_grace_count >= LINE_LOST_GRACE_FRAMES)
+        {
+            car_running = 0;
+        }
         return;
     }
+    // 找到目标时重置丢线计数
+    lost_grace_count = 0;
 
     // clamp 目标 x
     if (target_x < 0) target_x = 0;
@@ -172,15 +217,24 @@ void calc_error_image(void)
 
     int16 new_error = target_x - WARP_IMAGE_W / 2;
 
+    // 弯道中边线短于前瞻距离时放大偏差（补偿前瞻缩短效应）
+    if (road_type != straight)
+    {
+        uint8 max_count = left_edge_count > right_edge_count ? left_edge_count : right_edge_count;
+        if (max_count < pursuit_lookahead && max_count >= PURSUIT_MIN_POINTS)
+        {
+            new_error = (int16)((int32)new_error * (int32)pursuit_lookahead / (int32)max_count);
+        }
+    }
+
     // 限幅
-    if (new_error > 50) new_error = 50;
-    if (new_error < -50) new_error = -50;
+    if (new_error > error_limit) new_error = error_limit;
+    if (new_error < -error_limit) new_error = -error_limit;
 
     // 平滑滤波
     error_image = (int16)(0.9f * (float)new_error + 0.1f * (float)last_error);
     last_error  = error_image;
 }
-
 
 //===================================================================================================================
 // 函数简介     图像 PID 控制计算
@@ -219,7 +273,7 @@ void control_process(void)
     {
         car_running = 0;
         motor_control(0, 0);
-        fan_slow_stop();
+        //fan_slow_stop();
         return;
     }
 
@@ -227,7 +281,7 @@ void control_process(void)
     {
         car_running = 0;
         motor_control(0, 0);
-        fan_slow_stop();
+        //fan_slow_stop();
         return;
     }
 
@@ -236,19 +290,25 @@ void control_process(void)
     {
         car_running = 0;
         motor_control(0, 0);
-        fan_slow_stop();
+        //fan_slow_stop();
         return;
     }
     // 停车
     if (!car_running)
     {
         motor_control(0, 0);
-        fan_slow_stop();
+        //fan_slow_stop();
         return;
     }
 
     // 计算图像偏差
     calc_error_image();
+    if (!car_running)
+    {
+        motor_control(0, 0);
+        //fan_slow_stop();
+        return;
+    }
 
 
     // PID输出
@@ -257,7 +317,7 @@ void control_process(void)
 
     // 电机控制
     motor_control(control_base_speed + output, control_base_speed - output);
-
+/*
     // ===== 堵转保护停车 =====
     {
         static uint16 stall_frames = 0;
@@ -280,6 +340,59 @@ void control_process(void)
             stall_frames = 0;
         }
     }
+/*
+    // ===== 高度保护（Y轴垂直速度） =====
+    {
+        static uint16 height_frames = 0;
+        float ay_net = (imu_acc_y_f - acc_y_offset) * 9.8f;
+        vert_vel += ay_net * 0.004f;   // dt ≈ 4ms
+        vert_vel *= 0.95f;             // 衰减防漂移
+
+        float abs_vv = (vert_vel > 0) ? vert_vel : -vert_vel;
+        if (abs_vv > HEIGHT_VEL_THRESHOLD)
+        {
+            if (height_frames < 65535) height_frames++;
+            if (height_frames >= HEIGHT_STOP_FRAMES)
+            {
+                car_running = 0;
+            }
+        }
+        else
+        {
+            height_frames = 0;
+        }
+    }
+
+    // ===== 撞墙保护（IMU水平速度） =====
+    {
+        static float hor_vel = 0.0f;
+        static uint16 wall_frames = 0;
+        // Z轴为前进方向加速度，转为 m/s^2
+        float az_net = imu_acc_z_f * 9.8f;
+        hor_vel += az_net * 0.004f;    // dt ≈ 4ms
+        hor_vel *= 0.95f;              // 衰减防漂移
+
+        float abs_hv = (hor_vel > 0) ? hor_vel : -hor_vel;
+        int16 abs_enc_l = encoder_data_l;
+        if (abs_enc_l < 0) abs_enc_l = -abs_enc_l;
+        int16 abs_enc_r2 = encoder_data_r;
+        if (abs_enc_r2 < 0) abs_enc_r2 = -abs_enc_r2;
+        int16 enc_sum2 = abs_enc_l + abs_enc_r2;
+
+        if (abs_hv < WALL_HOR_VEL_MIN && enc_sum2 > WALL_ENCODER_MIN)
+        {
+            if (wall_frames < 65535) wall_frames++;
+            if (wall_frames >= WALL_STOP_FRAMES)
+            {
+                car_running = 0;
+            }
+        }
+        else
+        {
+            wall_frames = 0;
+        }
+    }
+*/
 
     dir_advance_pending = 0;
     uint16 time2 = system_getval_us();
@@ -301,6 +414,7 @@ void control_pid_reset(void)
     last_error = 0;
     output = 0;
     last_output = 0;
+    lost_grace_count = 0;
 }
 
 //===================================================================================================================

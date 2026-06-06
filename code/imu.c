@@ -18,6 +18,7 @@
 float imu_acc_x_f = 0, imu_acc_y_f = 0, imu_acc_z_f = 0;
 float imu_gyro_x_f = 0, imu_gyro_y_f = 0, imu_gyro_z_f = 0;
 float angle_out = 0.0f;  // 角度环输出值
+float acc_y_offset = 0.0f;                  // Y轴加速度计静止零偏 (g)，校准后替代硬编码 1.0
 
 // 换算角度
 #define DT 0.002f
@@ -80,6 +81,21 @@ float normalize_angle(float angle)
 }
 
 
+//加速度计 Y 轴零偏校准（上电静止时调用）
+void acc_calib(void)
+{
+    #define ACC_CALIB_SAMPLES 200
+    float sum = 0;
+    int i;
+    for (i = 0; i < ACC_CALIB_SAMPLES; i++)
+    {
+        imu660rb_get_acc();
+        sum += imu660rb_acc_transition(imu660rb_acc_y);
+        system_delay_ms(2);
+    }
+    acc_y_offset = sum / (float)ACC_CALIB_SAMPLES;
+}
+
 //上电静止校准（去极值+均值，比纯均值更抗干扰）
 void gyro_calib(void)
 {
@@ -98,7 +114,7 @@ void gyro_calib(void)
         system_delay_ms(1);
     }
 
-    //冒泡排序（数据量小，效率足够）
+    //冒泡排序
     for(i = 0; i < CALIB_SAMPLES - 1; i++)
     {
         for(j = 0; j < CALIB_SAMPLES - 1 - i; j++)
@@ -388,6 +404,9 @@ void my_imu_init(void)
     
     // 陀螺仪校准（调试距离环时禁用）
     gyro_calib();
+
+    // 加速度计 Y 轴零偏校准
+    acc_calib();
     
     // 角度环定时中断（调试距离环时禁用）
     pit_ms_init(CCU60_CH1, 2);

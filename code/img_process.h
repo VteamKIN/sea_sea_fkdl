@@ -65,13 +65,14 @@ enum JunctionType {
 #define JUNCTION_STABLE_THRESHOLD  2        // 路口检测防抖（进弯+退弯双向防抖）
 
 // Yaw 驱动退弯参数
-#define MIN_CURVE_YAW_DEG       75.0f      // 主阈值：yaw 累计达此值退弯
+#define MIN_CURVE_YAW_DEG       50.0f      // 主阈值：yaw 累计达此值退弯
 #define CURVE_TIMEOUT_FRAMES    160        // CURVE 超时(帧)：800ms @200fps
-#define CURVE_MIN_HOLD_FRAMES   5          // 进弯后最少保持帧数
-#define YAW_COMPLETE_STABLE_FRAMES 3       // yaw 达标后连续确认帧数
+#define CURVE_MIN_HOLD_FRAMES   3          // 进弯后最少保持帧数
+#define YAW_COMPLETE_STABLE_FRAMES 1       // yaw 达标后连续确认帧数
 
 // 十字路口直行穿越参数
-#define CROSS_IGNORE_PULSES_DEFAULT  2050    // 默认穿越忽略窗口（编码器脉冲累计值）
+#define CROSS_IGNORE_PULSES_DEFAULT  3200    // 默认穿越忽略窗口（编码器脉冲累计值）
+#define CURVE_EXIT_IGNORE_PULSES_DEFAULT 500 // 弯道退弯后忽略窗口，防止同一路口二次触发
 
 // 边线斜率突变检测（方案 E）：过滤倾斜直道误识别为路口
 // 原理：直道（含倾斜）边线沿自身斜率恒定无突变；真路口边线在某点急转，斜率突变大
@@ -96,11 +97,14 @@ enum JunctionType {
 #define CBH_WHITE_OFFSET          3        // 判定白区时相对行阈值的增量(降低提高暗道检出)
 
 // 边线回折截断阈值
-#define EDGE_FOLD_THRESHOLD       4        // 连续y递增超过此点数视为回折，截断后续点
+#define EDGE_FOLD_THRESHOLD       30        // 连续y递增超过此点数视为回折，截断后续点
+
+// 元器件绕边曲折屏蔽
+#define EDGE_KINK_MIN_POINTS      8         // 边线点数低于此值不做曲折屏蔽
+#define EDGE_KINK_END_MIN_DX      4         // 末端朝预期方向横移超过此值，才替换反向爬线
 
 // 元器件中空间隙跨越（起点检测用）
 #define ELEMENT_GAP_MAX_DEFAULT   15       // 起点检测允许跨越的最大暗间隙(像素)
-                                           // 元器件中空宽度通常 < 路宽的 3/4
 
 // 丢线保护停车
 #define LINE_LOST_MIN_POINTS      3        // 边线点数低于此值视为丢线
@@ -131,13 +135,15 @@ extern int16 right_edge[MAX_EDGE_POINTS][2];  // 右边线坐标 [i][0]=x [i][1]=y
 extern vuint8 right_edge_count;       // 右边线点数
 
 // --- 道路类型识别变量 ---
-#define road_num 20
+#define road_num 30
 extern vuint8  dir_count;             // 当前弯道序号(0~19)
-extern int8   choose[road_num];              // 方向选择 0:循左线 1:循右线 2:直行穿越 -1:停止
+extern int8   choose[road_num];              // 方向选择 0:循左线(yaw) 1:循右线(yaw) 2:直行穿越 3:循左线(编码器) 4:循右线(编码器) -1:停止
 extern int16  cross_ignore_pulses;           // 十字直行忽略窗口（编码器脉冲，可调参）
+extern int16  curve_exit_ignore_pulses;      // 弯道退弯后忽略窗口（编码器脉冲，可调参）
 extern vint8 current_target_dir;      // 当前循线方向(choose[dir_count]的缓存)
 extern volatile RUN_Dir road_type;            // 道路类型 straight/left/right
 extern vuint8 dir_advance_pending;    // dir_count 推进事件信号：detect_road_type 退弯瞬间设 1，control.c 处理后清 0
+extern vuint8 cross_active;          // 1=cross straight ignore window active
 
 // --- 路口检测变量 ---
 extern volatile enum JunctionType current_junction;  // 当前路口类型

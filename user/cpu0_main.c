@@ -1,4 +1,5 @@
 #include "zf_common_headfile.h"
+#include "cpu0_main.h"
 #include "isr.h"
 #pragma section all "cpu0_dsram"
 // 将本语句与 #pragma section all restore 语句之间的全局变量都放在CPU0的RAM中
@@ -13,37 +14,74 @@ int core0_main(void)
 
     cpu_wait_event_ready();         // 等待所有核心初始化完毕
 
-    // 先启动负压风扇，等待负压建立后再允许轮子控制
-    //fan_set(4000);
-    system_delay_ms(1000);           // 等待 1000ms 让负压建立
-    control_enable_flag = 1;        // 允许 ISR 中的 control_process() 执行
+
+    //上电默认不允许闭环控制，等待 KEY3 发车。
+#if menu_enable
+    car_running = 0;
+    control_enable_flag = 0;
+    __dsync();
+    uint8 launch_sequence_done = 0;
+#else
+    fan_set(4000);
+    system_delay_ms(1000);
+    car_running = 1;
+    control_enable_flag = 1;
+    __dsync();
+#endif
 
     while (TRUE)
     {
+#if menu_enable
+        if (car_running && !launch_sequence_done)
+        {
+            launch_sequence_done = 1;
+            fan_set(4000);
+            system_delay_ms(3000);
+            if (car_running)
+            {
+                control_enable_flag = 1;
+                __dsync();
+            }
+            else
+            {
+                launch_sequence_done = 0;
+            }
+        }
+        else if (!car_running && launch_sequence_done)
+        {
+            launch_sequence_done = 0;
+            control_enable_flag = 0;
+            __dsync();
+        }
+        menu_process();
+#endif
         // 电机开环测试
         //motor_left(1500);
         //motor_right(-1500);
         //tft_show_image();
         //printf("yaw=%f\n", yaw_angle);
         //printf("%f, %f, %f\n",imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
-
+        //Vofa_oscilloscope_send(R_PID.TargetSpeed, R_PID.ActualSpeed, L_PID.TargetSpeed, L_PID.ActualSpeed, 0, 0, 0, 0);
         // 等待 CPU1 图像处理完成后再做同帧的后处理/显示
+
         if (cpu1_img_ready_flag)
         {
 
-            tft180_show_int(100, 85, img_process_time, 4);
+
+
+            //tft180_show_int(100, 85, img_process_time, 4);
 
             //tft180_show_int(0,110,cross_encoder_accum,4);
-            //tft180_show_int(0,90,junction_detected,1);
+            //tft180_show_int(20,90,junction_detected,1);
 
 
             //tft180_show_int(0,90,left_slope_mutation,1);
             //tft180_show_int(0,110,right_slope_mutation,1);
 
-            //tft180_show_int(20, 90, raw_junction_debug, 1);
-            //printf("%d\n", error_image);
+            //tft180_show_int(0, 110, cross_encoder_accum, 4);
+            //tft180_show_int(0,90, error_image,2);
             // 示例见文件尾 DEBUG 区）
-            tft_show_warp_with_boundary();
+            //tft_show_warp_with_boundary();
             __dsync();
             cpu1_img_ready_flag = 0;
         }

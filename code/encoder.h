@@ -59,6 +59,7 @@ void encoder_interrupt_handler(void);       // 编码器中断处理函数
 void L_control(int16 target_speed);         // 左轮速度控制
 void R_control(int16 target_speed);         // 右轮速度控制
 void motor_control(int16 left_speed, int16 right_speed); // 双轮速度控制
+void encoder_speed_pid_reset(void);       // 清零左右轮速度PID状态
 void encoder_read(void);
 
 #endif /* CODE_ENCODER_H_ */

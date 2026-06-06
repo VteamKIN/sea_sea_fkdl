@@ -38,9 +38,9 @@ static const param_entry_t g_params[] =
     { "kp",  &kp,  PT_FLOAT, 0 },
     { "ki",  &ki,  PT_FLOAT, 0 },
     { "kd",  &kd,  PT_FLOAT, 0 },
-
     // 十字路口穿越参数
     { "cross", &cross_ignore_pulses,  PT_I16, 0 },   // 十字直行忽略窗口(编码器脉冲)
+    { "cv_exit", &curve_exit_ignore_pulses, PT_I16, 0 }, // 弯道退弯后忽略窗口
 };
 
 #define PARAM_COUNT  (sizeof(g_params) / sizeof(g_params[0]))

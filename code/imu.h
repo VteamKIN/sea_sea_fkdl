@@ -35,6 +35,7 @@ extern int16 imu_acc_data_x, imu_acc_data_y, imu_acc_data_z;     // 三轴加速度计
 //------------------------------------------------------------------------------------------------------------------
 extern float imu_acc_x_f, imu_acc_y_f, imu_acc_z_f;   // 加速度计数据 (g)
 extern float imu_gyro_x_f, imu_gyro_y_f, imu_gyro_z_f; // 陀螺仪数据 (deg/s)
+extern float acc_y_offset;                             // Y轴加速度计静止零偏 (g)
 extern float yaw_angle;                                // 航向角 (deg), 范围 [-180, 180]
 extern float gyro_offset;                            // 陀螺仪Z轴零偏 (deg/s)
 extern float angle_out;
@@ -86,6 +87,12 @@ float normalize_angle(float angle);
  * @note   校准过程约500ms，期间需保持静止
  */
 void gyro_calib(void);
+
+/**
+ * @brief  加速度计Y轴零偏校准 (上电静止状态下调用)
+ * @note   校准过程约400ms，期间需保持静止
+ */
+void acc_calib(void);
 
 /**
  * @brief  航向角积分更新

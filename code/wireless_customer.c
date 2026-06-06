@@ -57,12 +57,12 @@ void Vofa_oscilloscope_send(float Data1,float Data2,float Data3,float Data4,floa
     vofa_data[1]=Data2;
     vofa_data[0]=Data1;
 
-    //debug_send_buffer(vofa_data,8*sizeof(float));
+    debug_send_buffer(vofa_data,8*sizeof(float));
 //
-    //debug_send_buffer(vofa_tail, 4*sizeof(uint8));//发送vofa中justfloat协议的帧尾
+    debug_send_buffer(vofa_tail, 4*sizeof(uint8));//发送vofa中justfloat协议的帧尾
 
-    wireless_uart_send_buffer(vofa_data,8*sizeof(float));
-    wireless_uart_send_buffer(vofa_tail, 4);
+    //wireless_uart_send_buffer(vofa_data,8*sizeof(float));
+    //wireless_uart_send_buffer(vofa_tail, 4);
 
 }
 

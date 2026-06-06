@@ -7,6 +7,7 @@
  */
 
 #include "zf_common_headfile.h"
+#include "isr.h"
 
 // ============================================================
 // ½«Í¼Ïñ´¦ÀíÏà¹Ø±äÁ¿·ÅÈë CPU1 Êı¾İRAM£©
@@ -32,10 +33,12 @@ vuint8 right_edge_count = 0;         // ÓÒ±ßÏßµãÊı
 
 vuint8  dir_count = 0;               // µ±Ç°ÍäµÀĞòºÅ(0~19)
 static uint8 last_junction_detected = 0;  // ÉÏÒ»Ö¡ junction_detected£¨ÓÃÓÚ¼ì²âÉÏÉıÑØ£©
-int8  choose[road_num] = {1,0,0,-1}; // ·½ÏòÑ¡Ôñ 0:Ñ­×óÏß 1:Ñ­ÓÒÏß 2:Ö±ĞĞ´©Ô½ -1:Í£Ö¹
+int8  choose[road_num] = {1,-1}; // ·½ÏòÑ¡Ôñ 0:Ñ­×óÏß(yaw) 1:Ñ­ÓÒÏß(yaw) 2:Ö±ĞĞ´©Ô½ 3:Ñ­×óÏß(±àÂëÆ÷) 4:Ñ­ÓÒÏß(±àÂëÆ÷) -1:Í£Ö¹
 int16 cross_ignore_pulses = CROSS_IGNORE_PULSES_DEFAULT; // Ê®×ÖÖ±ĞĞºöÂÔ´°¿Ú£¨±àÂëÆ÷Âö³åÀÛ¼Æ£©
+int16 curve_exit_ignore_pulses = CURVE_EXIT_IGNORE_PULSES_DEFAULT; // ÍäµÀÍËÍäºóºöÂÔ´°¿Ú£¨±àÂëÆ÷Âö³åÀÛ¼Æ£©
 vint8 current_target_dir = 0;        // µ±Ç°Ñ­Ïß·½Ïò(choose[dir_count]µÄ»º´æ)
 vuint8 dir_advance_pending = 0;      // dir_count ÍÆ½øÊÂ¼şĞÅºÅ£¨detect_road_type ÍËÍäË²¼äÉè 1£¬control.c ´¦ÀíºóÇå 0£©
+vuint8 cross_active = 0;             // 1=cross straight ignore window active
 
 volatile RUN_Dir road_type =straight;       // µÀÂ·ÀàĞÍ straight/left/right
 volatile enum JunctionType current_junction = JUNCTION_NONE;  // µ±Ç°Â·¿ÚÀàĞÍ
@@ -48,10 +51,9 @@ static enum JunctionType last_raw_junction = JUNCTION_NONE;   // ÉÏÒ»´ÎÔ­Ê¼Â·¿Ú¼
 static uint8 junction_stable_count = 0;      // Â·¿Ú¼ì²â·À¶¶¼ÆÊı
 static uint8 edge_start_lost = 0;            // ±ßÏßÆğÊ¼µã¶ªÊ§±êÖ¾
 
-static float Mat1[3][3]= {  { 0.616450095074508, -0.457607373643385, 35.7432540391721},
-                            { 0.011114605002624, 0.666532477149147, 5.98414122411157},
-                            { -0.000199978688494178, -0.00567658803479972, 0.942310105378709}, };
-
+static float  Mat1[3][3]=       { { 0.462294745070467, -0.405415828307522, 42.7673376252083},
+        { -0.0686056632504893, 0.704497456356808, 5.69914538551316},
+        { -0.000503555802327882, -0.00475326158864043, 0.856296641858558}, };
 static float Tx = 0;                         // ÄæÍ¸ÊÓ±ä»»ÖĞ¼ä½á¹ûx
 static float Ty = 0;                         // ÄæÍ¸ÊÓ±ä»»ÖĞ¼ä½á¹ûy
 
@@ -741,7 +743,7 @@ void detect_junction_type(void)
 // ·µ»Ø²ÎÊı     void
 // Ê¹ÓÃÊ¾Àı     detect_road_type()
 // ±¸×¢ĞÅÏ¢     STATE_STRAIGHT: µÈ´ı junction ÉÏÉıÑØ
-//              STATE_CURVE:    Ñ­±ßÏß£¬yaw ÍËÍä
+//              STATE_CURVE:    Ñ­±ßÏß£¬yaw »ò±àÂëÆ÷ÍËÍä
 //              STATE_CROSS:    Ê®×ÖÖ±ĞĞ´©Ô½£¬±àÂëÆ÷ºöÂÔ´°¿Ú
 //===================================================================================================================
 void detect_road_type(void)
@@ -750,6 +752,7 @@ void detect_road_type(void)
     if (dir_count >= road_num)
     {
         road_type = straight;
+        cross_active = 0;
         last_junction_detected = junction_detected;
         return;
     }
@@ -761,6 +764,7 @@ void detect_road_type(void)
     if (target == -1)
     {
         road_type = straight;
+        cross_active = 0;
         last_junction_detected = junction_detected;
         return;
     }
@@ -772,22 +776,43 @@ void detect_road_type(void)
     // ÈıÌ¬×´Ì¬»ú
     static uint8     state                 = 0;        // 0=STRAIGHT, 1=CURVE, 2=CROSS
     static RUN_Dir   latched_dir           = straight; // CURVE ×´Ì¬ÏÂÑ­µÄ±ßÏß
+    static uint8     latched_encoder_exit  = 0;        // 1=±àÂëÆ÷ãĞÖµÍËÍä£¬0=yaw ÍËÍä
     static float     curve_entry_yaw       = 0.0f;     // ½øÍäÊ±µÄ yaw ½Ç
     static uint16    curve_frame_count     = 0;        // CURVE ×´Ì¬³ÖĞøÖ¡Êı
     static uint8     yaw_complete_count    = 0;
-    static int32     cross_encoder_accum   = 0;        // CROSS ×´Ì¬±àÂëÆ÷ÀÛ¼Æ
+    static int32     encoder_exit_start    = 0;        // ±àÂëÆ÷ÍËÍä/ºöÂÔ´°¿ÚµÄÈ«¾ÖÀÛ¼ÆÆğµã
+    static uint8     post_curve_ignore     = 0;        // ÍËÍäºóºöÂÔÍ¬Ò»Â·¿Ú²ĞÁô¼ì²â
+    static int32     post_curve_ignore_start = 0;
 
     switch (state)
     {
     case 0: // ===== STATE_STRAIGHT£ºÑ­ÖĞÏß£¬µÈ´ı junction ÉÏÉıÑØ =====
         road_type = straight;
+        if (post_curve_ignore)
+        {
+            if (curve_exit_ignore_pulses <= 0)
+            {
+                post_curve_ignore = 0;
+            }
+            else
+            {
+                int32 ignore_delta = cross_encoder_accum - post_curve_ignore_start;
+                if (ignore_delta < 0) ignore_delta = -ignore_delta;
+                if (ignore_delta >= (int32)curve_exit_ignore_pulses)
+                {
+                    post_curve_ignore = 0;
+                }
+                junction_rising = 0;
+            }
+        }
         if (junction_rising)
         {
             if (target == 2)
             {
                 // Ê®×ÖÖ±ĞĞ£ºÁ¢¿ÌÍÆ½ø dir_count£¬½øÈëºöÂÔ´°¿Ú
                 state = 2;
-                cross_encoder_accum = 0;
+                latched_encoder_exit = 0;
+                encoder_exit_start = cross_encoder_accum;
                 road_type = straight;
                 if (dir_count + 1 < road_num)
                 {
@@ -797,12 +822,14 @@ void detect_road_type(void)
             }
             else
             {
-                // ÍäµÀ£¨choose==0 Ñ­×ó£¬choose==1 Ñ­ÓÒ£©
-                latched_dir        = (target == 0) ? left : right;
+                // 0/1£ºÑ­±ßÏß£¬yawÍËÍä£»3/4£ºÑ­±ßÏß£¬±àÂëÆ÷ãĞÖµÍËÍä
+                latched_dir        = (target == 0 || target == 3) ? left : right;
+                latched_encoder_exit = (target == 3 || target == 4) ? 1 : 0;
                 state              = 1;
                 curve_entry_yaw    = yaw_angle;
                 curve_frame_count  = 0;
                 yaw_complete_count = 0;
+                encoder_exit_start = cross_encoder_accum;
                 road_type          = latched_dir;
             }
         }
@@ -812,6 +839,30 @@ void detect_road_type(void)
         curve_frame_count++;
         road_type = latched_dir;
         {
+            if (latched_encoder_exit)
+            {
+                int32 encoder_delta = cross_encoder_accum - encoder_exit_start;
+                if (encoder_delta < 0) encoder_delta = -encoder_delta;
+
+                if (encoder_delta >= (int32)cross_ignore_pulses)
+                {
+                    state              = 0;
+                    latched_dir        = straight;
+                    latched_encoder_exit = 0;
+                    yaw_complete_count = 0;
+                    road_type          = straight;
+                    post_curve_ignore  = (curve_exit_ignore_pulses > 0) ? 1 : 0;
+                    post_curve_ignore_start = cross_encoder_accum;
+                    control_pid_reset();
+                    if (dir_count + 1 < road_num)
+                    {
+                        dir_count++;
+                        dir_advance_pending = 1;
+                    }
+                }
+                break;
+            }
+
             float yaw_delta = fabsf(normalize_angle(yaw_angle - curve_entry_yaw));
             uint8 yaw_min_met = (yaw_delta >= MIN_CURVE_YAW_DEG);
 
@@ -823,8 +874,12 @@ void detect_road_type(void)
                     // Õı³£ÍËÍä£ºyaw ´ï±ê
                     state              = 0;
                     latched_dir        = straight;
+                    latched_encoder_exit = 0;
                     yaw_complete_count = 0;
                     road_type          = straight;
+                    post_curve_ignore  = (curve_exit_ignore_pulses > 0) ? 1 : 0;
+                    post_curve_ignore_start = cross_encoder_accum;
+                    control_pid_reset();
                     if (dir_count + 1 < road_num)
                     {
                         dir_count++;
@@ -840,8 +895,11 @@ void detect_road_type(void)
                     // ³¬Ê± + yaw ²»×ã ¡ú Î±ÍäµÀ£¬Ç¿ÖÆÍË³ö£¬²»ÍÆ½ø dir_count
                     state              = 0;
                     latched_dir        = straight;
+                    latched_encoder_exit = 0;
                     yaw_complete_count = 0;
                     road_type          = straight;
+                    post_curve_ignore  = (curve_exit_ignore_pulses > 0) ? 1 : 0;
+                    post_curve_ignore_start = cross_encoder_accum;
                 }
             }
         }
@@ -850,14 +908,11 @@ void detect_road_type(void)
     case 2: // ===== STATE_CROSS£ºÊ®×ÖÖ±ĞĞ´©Ô½£¬±àÂëÆ÷ºöÂÔ´°¿Ú =====
         road_type = straight;
         {
-            // ÀÛ¼Æ±àÂëÆ÷Âö³å£¨È¡×óÓÒÆ½¾ù¾ø¶ÔÖµ£©
-            int16 enc_l = encoder_data_l;
-            int16 enc_r = encoder_data_r;
-            if (enc_l < 0) enc_l = -enc_l;
-            if (enc_r < 0) enc_r = -enc_r;
-            cross_encoder_accum += (int32)(enc_l + enc_r) / 2;
+            // Ê¹ÓÃ±àÂëÆ÷ISRÖĞµÄÈ«¾ÖÀÛ¼ÆÁ¿£¬±ÜÃâÍ¼ÏñÖ¡ÂÊÓë±àÂëÆ÷²ÉÑùÆµÂÊ²»Ò»ÖÂµ¼ÖÂÖØ¸´/Â©¼Æ¡£
+            int32 encoder_delta = cross_encoder_accum - encoder_exit_start;
+            if (encoder_delta < 0) encoder_delta = -encoder_delta;
 
-            if (cross_encoder_accum >= (int32)cross_ignore_pulses)
+            if (encoder_delta >= (int32)cross_ignore_pulses)
             {
                 // ºöÂÔ´°¿Ú½áÊø£¬»Øµ½ STATE_STRAIGHT
                 state = 0;
@@ -867,28 +922,31 @@ void detect_road_type(void)
 
     default:
         state = 0;
+        latched_encoder_exit = 0;
         road_type = straight;
         break;
     }
 
-    // ===== ¶ªÏß±£»¤Í£³µ =====
-    {
-        static uint16 line_lost_frames = 0;
-        uint8 both_lost = (left_edge_count < LINE_LOST_MIN_POINTS &&
-                           right_edge_count < LINE_LOST_MIN_POINTS) ? 1 : 0;
-        if (both_lost && state != 2)  // STATE_CROSS ÆÚ¼ä»íÃâ
-        {
-            if (line_lost_frames < 65535) line_lost_frames++;
-            if (line_lost_frames >= LINE_LOST_STOP_FRAMES)
-            {
-                car_running = 0;
-            }
-        }
-        else
-        {
-            line_lost_frames = 0;
-        }
-    }
+    cross_active = (state == 2 || post_curve_ignore) ? 1 : 0;
+
+    // ===== ¶ªÏß±£»¤Í£³µ£¨ÒÑ½ûÓÃ£© =====
+    // {
+    //     static uint16 line_lost_frames = 0;
+    //     uint8 both_lost = (left_edge_count < LINE_LOST_MIN_POINTS &&
+    //                        right_edge_count < LINE_LOST_MIN_POINTS) ? 1 : 0;
+    //     if (both_lost && state != 2)  // STATE_CROSS ÆÚ¼ä»íÃâ
+    //     {
+    //         if (line_lost_frames < 65535) line_lost_frames++;
+    //         if (line_lost_frames >= LINE_LOST_STOP_FRAMES)
+    //         {
+    //             car_running = 0;
+    //         }
+    //     }
+    //     else
+    //     {
+    //         line_lost_frames = 0;
+    //     }
+    // }
 }
 
 //===================================================================================================================

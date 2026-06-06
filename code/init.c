@@ -4,6 +4,7 @@
  * Author: aaa
  */
 #include "zf_common_headfile.h"
+#include "cpu0_main.h"
 
 volatile vuint8 camera_init_ok = 0;
 
@@ -39,10 +40,11 @@ void all_init(void)
     //imu_kalman_init_all(0.001f, 0.5f, 0.01f, 1.0f);
 
     // 按键 + 菜单
-    //key_init(10);                                                         // 按键初始化（10ms 扫描周期）
-    //pit_ms_init(CCU61_CH0, 10);                                           // 启动 10ms PIT 用于按键扫描
-    //menu_init();                                                          // 菜单初始化（显示主菜单）
-
+#if menu_enable
+    key_init(10);                                                         // 按键初始化（10ms 扫描周期）
+    pit_ms_init(CCU61_CH0, 10);                                           // 启动 10ms PIT 用于按键扫描
+    menu_init();                                                          // 菜单初始化（显示主菜单）
+#endif
 }
 
 

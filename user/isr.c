@@ -40,7 +40,7 @@
 // 对于TC系列默认是不支持中断嵌套的，希望支持中断嵌套需要在中断内使用 enableInterrupts(); 来开启中断嵌套
 // 简单点说实际上进入中断后TC系列的硬件自动调用了 disableInterrupts(); 来拒绝响应任何的中断，因此需要我们自己手动调用 enableInterrupts(); 来开启中断的响应。
 
-int cross_encoder_accum = 0;
+volatile int32 cross_encoder_accum = 0;
 // **************************** PIT定时中断 ****************************
 IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
 {
@@ -49,11 +49,15 @@ IFX_INTERRUPT(cc60_pit_ch0_isr, 0, CCU6_0_CH0_ISR_PRIORITY)
 
     // 编码器数据采集
     encoder_read();
-    //L_control(1000);
-    //R_control(1000);
+    //L_control(2000);
+    //R_control(2000);
     // 闭环控制
     //control_process();
-    cross_encoder_accum += (int32)(encoder_data_l + encoder_data_r) / 2;
+    int16 enc_l = encoder_data_l;
+    int16 enc_r = encoder_data_r;
+    if (enc_l < 0) enc_l = -enc_l;
+    if (enc_r < 0) enc_r = -enc_r;
+    cross_encoder_accum += (int32)(enc_l + enc_r) / 2;
     // 角度环控制
     // if (angle_loop_enable)
     // {
@@ -71,6 +75,11 @@ IFX_INTERRUPT(cc60_pit_ch1_isr, 0, CCU6_0_CH1_ISR_PRIORITY)
     imu660rb_get_gyro();                                                    // 获取陀螺仪原始数据
     imu_gyro_x_f = imu660rb_gyro_transition(imu660rb_gyro_y);              // 转换为 deg/s（X 轴用作偏航）
     gyro_update();                                                          // 航向角积分 (yaw_angle)
+
+    imu660rb_get_acc();                                                     // 获取加速度计原始数据
+    imu_acc_x_f = imu660rb_acc_transition(imu660rb_acc_x);                 // X轴加速度 (g)
+    imu_acc_y_f = imu660rb_acc_transition(imu660rb_acc_y);                 // Y轴加速度 (g) — 高度轴
+    imu_acc_z_f = imu660rb_acc_transition(imu660rb_acc_z);                 // Z轴加速度 (g) — 前进轴
 }
 
 IFX_INTERRUPT(cc61_pit_ch0_isr, 0, CCU6_1_CH0_ISR_PRIORITY)

@@ -38,7 +38,7 @@
 
 #include "zf_common_headfile.h"
 
-extern int cross_encoder_accum;
+extern volatile int32 cross_encoder_accum;
 
 
 

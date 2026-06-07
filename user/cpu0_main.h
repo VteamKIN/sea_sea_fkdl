@@ -76,7 +76,7 @@ typedef struct
     AppInfo info;                               /**< \brief Info object */
 } App_Cpu0;
 
-#define menu_enable     1
+#define menu_enable     0
 
 /******************************************************************************/
 /*------------------------------Global variables------------------------------*/

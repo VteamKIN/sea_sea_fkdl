@@ -33,7 +33,7 @@ vuint8 right_edge_count = 0;         // 右边线点数
 
 vuint8  dir_count = 0;               // 当前弯道序号(0~19)
 static uint8 last_junction_detected = 0;  // 上一帧 junction_detected（用于检测上升沿）
-int8  choose[road_num] = {1,-1}; // 方向选择 0:循左线(yaw) 1:循右线(yaw) 2:直行穿越 3:循左线(编码器) 4:循右线(编码器) -1:停止
+int8  choose[road_num] = {0,1,-1}; // 方向选择 0:循左线(yaw) 1:循右线(yaw) 2:直行穿越 3:循左线(编码器) 4:循右线(编码器) -1:停止
 int16 cross_ignore_pulses = CROSS_IGNORE_PULSES_DEFAULT; // 十字直行忽略窗口（编码器脉冲累计）
 int16 curve_exit_ignore_pulses = CURVE_EXIT_IGNORE_PULSES_DEFAULT; // 弯道退弯后忽略窗口（编码器脉冲累计）
 vint8 current_target_dir = 0;        // 当前循线方向(choose[dir_count]的缓存)
@@ -47,6 +47,10 @@ vuint8  junction_detected = 0;       // 路口检测标志 0:无 1:有
 volatile enum JunctionType raw_junction_debug = JUNCTION_NONE; // 路口检测原始值（供调试显示）
 volatile uint8 left_slope_mutation = 0;      // 左边线是否检测到斜率突变（方案E输出，调试可见）
 volatile uint8 right_slope_mutation = 0;     // 右边线是否检测到斜率突变（方案E输出，调试可见）
+vuint8 element_repair_active = 0;             // 元器件补线状态
+vuint8 element_repair_bad_rows = 0;           // 本帧异常/缺失行数
+vuint8 element_repair_fixed_rows = 0;         // 本帧补线行数
+vuint8 element_repair_cross_rows = 0;         // 本帧左右边线相交/过近行数
 static enum JunctionType last_raw_junction = JUNCTION_NONE;   // 上一次原始路口检测结果(防抖用)
 static uint8 junction_stable_count = 0;      // 路口检测防抖计数
 static uint8 edge_start_lost = 0;            // 边线起始点丢失标志
@@ -118,6 +122,410 @@ static uint8 cbh_is_jump(uint8 p1, uint8 p2)
 
 
 //===================================================================================================================
+static int element_abs_int(int v)
+{
+    return (v < 0) ? -v : v;
+}
+
+static int16 element_clamp_x(int value)
+{
+    if (value < 0) return 0;
+    if (value > WARP_IMAGE_W - 1) return WARP_IMAGE_W - 1;
+    return (int16)value;
+}
+
+static void element_build_row_edges(int16 left_x[], int16 right_x[])
+{
+    for (int y = 0; y < WARP_IMAGE_H; y++)
+    {
+        left_x[y] = -1;
+        right_x[y] = -1;
+    }
+
+    for (int i = 0; i < left_edge_count; i++)
+    {
+        int y = left_edge[i][1];
+        int x = left_edge[i][0];
+        if (y >= 0 && y < WARP_IMAGE_H && x >= 0 && x < WARP_IMAGE_W)
+        {
+            if (left_x[y] < 0 || x < left_x[y])
+                left_x[y] = (int16)x;
+        }
+    }
+
+    for (int i = 0; i < right_edge_count; i++)
+    {
+        int y = right_edge[i][1];
+        int x = right_edge[i][0];
+        if (y >= 0 && y < WARP_IMAGE_H && x >= 0 && x < WARP_IMAGE_W)
+        {
+            if (right_x[y] < 0 || x > right_x[y])
+                right_x[y] = (int16)x;
+        }
+    }
+}
+
+static void element_rebuild_edge_points(const int16 out_left[], const int16 out_right[],
+                                        const uint8 valid[])
+{
+    int left_num = 0;
+    int right_num = 0;
+
+    for (int y = WARP_IMAGE_H - 1; y >= 0; y--)
+    {
+        if (!valid[y])
+            continue;
+
+        if (left_num < MAX_EDGE_POINTS)
+        {
+            left_edge[left_num][0] = out_left[y];
+            left_edge[left_num][1] = (int16)y;
+            left_num++;
+        }
+
+        if (right_num < MAX_EDGE_POINTS)
+        {
+            right_edge[right_num][0] = out_right[y];
+            right_edge[right_num][1] = (int16)y;
+            right_num++;
+        }
+    }
+
+    left_edge_count = (uint8)left_num;
+    right_edge_count = (uint8)right_num;
+}
+
+//===================================================================================================================
+// 函数简介     元器件道路中断修复：按 y 行重建边线并补 bad/missing 段
+// 参数说明     void
+// 返回参数     void
+// 备注信息     只在直道非十字窗口启用；补线点只供本帧控制/路口检测使用，模型仅由稳定帧更新
+//===================================================================================================================
+static void repair_element_break_lines(void)
+{
+#if ELEMENT_REPAIR_ENABLE
+    static int16 model_center[WARP_IMAGE_H];
+    static uint8 model_valid[WARP_IMAGE_H];
+    static int16 model_width = ELEMENT_REPAIR_DEFAULT_WIDTH;
+    static uint8 model_ready = 0;
+    static uint8 repair_active = 0;
+    static uint8 recover_frames = 0;
+
+    int16 left_x[WARP_IMAGE_H];
+    int16 right_x[WARP_IMAGE_H];
+    int16 center[WARP_IMAGE_H];
+    int16 fill_center[WARP_IMAGE_H];
+    int16 out_left[WARP_IMAGE_H];
+    int16 out_right[WARP_IMAGE_H];
+    uint8 valid[WARP_IMAGE_H];
+    uint8 fill_valid[WARP_IMAGE_H];
+    uint8 repaired[WARP_IMAGE_H];
+
+    element_repair_bad_rows = 0;
+    element_repair_fixed_rows = 0;
+    element_repair_cross_rows = 0;
+
+    if (cross_active || road_type != straight)
+    {
+        repair_active = 0;
+        recover_frames = 0;
+        element_repair_active = 0;
+        return;
+    }
+
+    element_build_row_edges(left_x, right_x);
+
+    int width_sum = 0;
+    int width_count = 0;
+    for (int y = 0; y < WARP_IMAGE_H; y++)
+    {
+        if (left_x[y] >= 0 && right_x[y] >= 0)
+        {
+            int width = right_x[y] - left_x[y];
+            if (width >= ELEMENT_REPAIR_MIN_WIDTH && width <= ELEMENT_REPAIR_MAX_WIDTH)
+            {
+                width_sum += width;
+                width_count++;
+            }
+        }
+    }
+
+    int16 width_used;
+    if (width_count >= 4)
+        width_used = (int16)(width_sum / width_count);
+    else if (road_width_avg >= ELEMENT_REPAIR_MIN_WIDTH)
+        width_used = (int16)road_width_avg;
+    else if (model_ready)
+        width_used = model_width;
+    else
+        width_used = ELEMENT_REPAIR_DEFAULT_WIDTH;
+
+    if (width_used < ELEMENT_REPAIR_MIN_WIDTH)
+        width_used = ELEMENT_REPAIR_MIN_WIDTH;
+    if (width_used > ELEMENT_REPAIR_MAX_WIDTH)
+        width_used = ELEMENT_REPAIR_MAX_WIDTH;
+
+    int width_tol = width_used / 2;
+    if (width_tol < ELEMENT_REPAIR_WIDTH_TOL)
+        width_tol = ELEMENT_REPAIR_WIDTH_TOL;
+    int width_min = width_used - width_tol;
+    int width_max = width_used + width_tol;
+    if (width_min < ELEMENT_REPAIR_MIN_WIDTH)
+        width_min = ELEMENT_REPAIR_MIN_WIDTH;
+
+    int valid_rows = 0;
+    int first_valid = -1;
+    int last_valid = -1;
+    int bottom_valid_rows = 0;
+
+    for (int y = 0; y < WARP_IMAGE_H; y++)
+    {
+        center[y] = -1;
+        fill_center[y] = -1;
+        out_left[y] = -1;
+        out_right[y] = -1;
+        valid[y] = 0;
+        fill_valid[y] = 0;
+        repaired[y] = 0;
+
+        if (left_x[y] >= 0 && right_x[y] >= 0)
+        {
+            int width = right_x[y] - left_x[y];
+            if (width <= ELEMENT_REPAIR_CROSS_MIN_GAP)
+            {
+                element_repair_cross_rows++;
+                element_repair_bad_rows++;
+                continue;
+            }
+            if (width < width_min || width > width_max)
+            {
+                element_repair_bad_rows++;
+                continue;
+            }
+
+            center[y] = (int16)((left_x[y] + right_x[y]) / 2);
+            valid[y] = 1;
+        }
+    }
+
+    int prev_valid = 0;
+    int prev_center = 0;
+    for (int y = WARP_IMAGE_H - 1; y >= 0; y--)
+    {
+        if (!valid[y])
+            continue;
+
+        if (prev_valid && element_abs_int((int)center[y] - prev_center) > ELEMENT_REPAIR_CENTER_JUMP)
+        {
+            valid[y] = 0;
+            element_repair_bad_rows++;
+            continue;
+        }
+
+        prev_valid = 1;
+        prev_center = center[y];
+    }
+
+    if (model_ready)
+    {
+        for (int y = 0; y < WARP_IMAGE_H; y++)
+        {
+            if (valid[y] && model_valid[y] &&
+                element_abs_int((int)center[y] - (int)model_center[y]) > ELEMENT_REPAIR_CENTER_JUMP)
+            {
+                valid[y] = 0;
+                element_repair_bad_rows++;
+            }
+        }
+    }
+
+    for (int y = 0; y < WARP_IMAGE_H; y++)
+    {
+        if (!valid[y])
+            continue;
+
+        valid_rows++;
+        if (first_valid < 0)
+            first_valid = y;
+        last_valid = y;
+        if (y >= WARP_IMAGE_H - BOTTOM_SAMPLE_ROWS)
+            bottom_valid_rows++;
+    }
+
+    uint8 repair_needed = 0;
+    if (element_repair_bad_rows > 0 || element_repair_cross_rows > 0)
+        repair_needed = 1;
+    if (model_ready && (edge_start_lost || valid_rows < ELEMENT_REPAIR_MODEL_MIN_ROWS))
+        repair_needed = 1;
+    if (model_ready && bottom_valid_rows < 2 && valid_rows > 0)
+        repair_needed = 1;
+
+    // 先保留当前帧可信行，再补中间断段。
+    for (int y = 0; y < WARP_IMAGE_H; y++)
+    {
+        if (valid[y])
+        {
+            fill_center[y] = center[y];
+            fill_valid[y] = 1;
+        }
+    }
+
+    if (valid_rows >= 2)
+    {
+        int y = first_valid;
+        while (y <= last_valid)
+        {
+            if (fill_valid[y])
+            {
+                y++;
+                continue;
+            }
+
+            int start = y;
+            while (y <= last_valid && !fill_valid[y])
+                y++;
+            int end = y - 1;
+            int above = start - 1;
+            int below = end + 1;
+            int len = end - start + 1;
+
+            if (above >= 0 && below < WARP_IMAGE_H && fill_valid[above] && fill_valid[below] &&
+                len <= ELEMENT_REPAIR_MAX_GAP_ROWS)
+            {
+                int dy = below - above;
+                int dc = fill_center[below] - fill_center[above];
+                for (int yy = start; yy <= end; yy++)
+                {
+                    fill_center[yy] = (int16)(fill_center[above] + dc * (yy - above) / dy);
+                    fill_valid[yy] = 1;
+                    repaired[yy] = 1;
+                    element_repair_fixed_rows++;
+                }
+            }
+        }
+    }
+
+    // 异常状态下，底部/顶部缺锚点时必须用进入前模型或最近可信行延伸补出边线。
+    if (repair_needed)
+    {
+        for (int y = 0; y < WARP_IMAGE_H; y++)
+        {
+            if (fill_valid[y])
+                continue;
+
+            if (model_ready && model_valid[y])
+            {
+                fill_center[y] = model_center[y];
+                fill_valid[y] = 1;
+                repaired[y] = 1;
+                element_repair_fixed_rows++;
+            }
+        }
+
+        // 如果模型还没覆盖某些行，用同帧最近可信行向外延伸，避免底部电容/中空区域无点可用。
+        int nearest_y = -1;
+        for (int y = 0; y < WARP_IMAGE_H; y++)
+        {
+            if (fill_valid[y])
+            {
+                nearest_y = y;
+            }
+            else if (nearest_y >= 0)
+            {
+                fill_center[y] = fill_center[nearest_y];
+                fill_valid[y] = 1;
+                repaired[y] = 1;
+                element_repair_fixed_rows++;
+            }
+        }
+
+        nearest_y = -1;
+        for (int y = WARP_IMAGE_H - 1; y >= 0; y--)
+        {
+            if (fill_valid[y])
+            {
+                nearest_y = y;
+            }
+            else if (nearest_y >= 0)
+            {
+                fill_center[y] = fill_center[nearest_y];
+                fill_valid[y] = 1;
+                repaired[y] = 1;
+                element_repair_fixed_rows++;
+            }
+        }
+    }
+
+    int fill_rows = 0;
+    for (int y = 0; y < WARP_IMAGE_H; y++)
+    {
+        if (!fill_valid[y])
+            continue;
+
+        fill_rows++;
+        if (!repaired[y] && left_x[y] >= 0 && right_x[y] >= 0)
+        {
+            out_left[y] = left_x[y];
+            out_right[y] = right_x[y];
+        }
+        else
+        {
+            int left = fill_center[y] - width_used / 2;
+            int right = left + width_used;
+            out_left[y] = element_clamp_x(left);
+            out_right[y] = element_clamp_x(right);
+        }
+    }
+
+    if ((repair_needed || element_repair_fixed_rows > 0) &&
+        fill_rows >= ELEMENT_REPAIR_MODEL_MIN_ROWS)
+    {
+        element_rebuild_edge_points(out_left, out_right, fill_valid);
+        repair_active = 1;
+        recover_frames = 0;
+    }
+    else
+    {
+        if (repair_active)
+        {
+            if (recover_frames < 255)
+                recover_frames++;
+            if (recover_frames >= ELEMENT_REPAIR_RECOVER_FRAMES)
+                repair_active = 0;
+        }
+    }
+
+    if (width_count >= 4)
+    {
+        if (road_width_avg < ELEMENT_REPAIR_MIN_WIDTH)
+            road_width_avg = (uint8)width_used;
+        else
+            road_width_avg = (uint8)(((int)road_width_avg * 3 + width_used) / 4);
+    }
+
+    // 模型只从当前帧真实可信行学习，不从补线行学习。
+    if (!repair_active && valid_rows >= ELEMENT_REPAIR_MODEL_MIN_ROWS)
+    {
+        for (int y = 0; y < WARP_IMAGE_H; y++)
+        {
+            if (valid[y])
+            {
+                model_center[y] = center[y];
+                model_valid[y] = 1;
+            }
+            else
+            {
+                model_valid[y] = 0;
+            }
+        }
+        model_width = width_used;
+        model_ready = 1;
+    }
+
+    element_repair_active = repair_active;
+#endif
+}
+
 // 函数简介     构建积分图 计算单行像素和
 // 参数说明     *img    图像指针
 // 返回参数     void
@@ -487,6 +895,9 @@ void zi_shi_ying_warp(void)
             break;
         }
     }
+
+    // 元器件导致左右边线相交/中断时，在图像层按 y 行补回直道边线。
+    repair_element_break_lines();
 
 }
 

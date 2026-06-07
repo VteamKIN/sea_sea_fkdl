@@ -81,7 +81,15 @@ int core0_main(void)
             //tft180_show_int(0, 110, cross_encoder_accum, 4);
             //tft180_show_int(0,90, error_image,2);
             // 示例见文件尾 DEBUG 区）
-            //tft_show_warp_with_boundary();
+            tft_show_warp_with_boundary();
+//            tft180_show_string(0, 84, "DX:");
+//            tft180_show_int(24, 84, pursuit_debug_dx, 4);
+//            tft180_show_string(64, 84, "TX:");
+//            tft180_show_int(88, 84, pursuit_debug_target_x, 3);
+//            tft180_show_string(0, 100, "K:");
+//            tft180_show_float(16, 100, pursuit_debug_kappa, 2, 4);
+//            tft180_show_string(72, 100, "E:");
+//            tft180_show_int(88, 100, error_image, 4);
             __dsync();
             cpu1_img_ready_flag = 0;
         }

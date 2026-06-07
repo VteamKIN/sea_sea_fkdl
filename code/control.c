@@ -43,15 +43,23 @@ static vint16 last_output = 0;              // 上一帧 PID 输出
 vint16 output = 0;                          // PID 输出（速度偏移量，限幅 ±OUTPUT_LIMIT）
 
 // 电机速度
-int16 control_base_speed = 2600;             //控制模块基础速度
+int16 control_base_speed = 1500;             //控制模块基础速度
 vint16 left_speed = 0;                      // 左轮速度
 vint16 right_speed = 0;                     // 右轮速度
 
 // Pure Pursuit 参数
-int16  pursuit_lookahead = 200;              // 前瞻取边线第 N 个点（索引，0=底部最近）
+int16  pursuit_lookahead = 60;              // 前瞻取边线第 N 个点（索引，0=底部最近）
 int16  pursuit_inward_bias = -3;             // 弯道内偏量（像素，循单边时朝内侧偏置）
+float  pursuit_lat_scale = 0.8f;           // 横向像素偏差到 error_image 的比例
+float  pursuit_curve_scale = 1500.0f;        // Pure Pursuit 曲率到 error_image 的比例
 int16  error_limit = 100;                   // 图像偏差限幅
 
+// Pure Pursuit 调试变量
+vint16 pursuit_debug_target_x = 0;           // Pure Pursuit 目标点 x 坐标
+vint16 pursuit_debug_target_y = 0;           // Pure Pursuit 目标点 y 坐标
+vint16 pursuit_debug_dx = 0;                 // 目标点相对图像中心的横向偏差
+float  pursuit_debug_kappa = 0.0f;           // Pure Pursuit 图像坐标曲率
+float  pursuit_debug_error_f = 0.0f;         // 限幅和平滑前的浮点偏差
 // speed_change 调参
 int16 speed_change_step       = 10;     // LINEAR    每帧步长
 float speed_change_alpha      = 0.1f;   // EXP_MIN   指数系数
@@ -121,7 +129,7 @@ static uint8 pursuit_walk_edge(const int16 edge[][2], int count, int idx,
 // 函数简介     计算图像偏差 error_image（PID 输入）— Pure Pursuit
 // 参数说明     void
 // 返回参数     void（结果写入全局 error_image）
-// 备注信息     取边线第 pursuit_lookahead 个点为目标点 Tx，error = Tx - 中心
+// 备注信息     取边线第 pursuit_lookahead 个点为目标点，按横向偏差 + 图像坐标曲率计算 error
 //             直道循双边中点，左/右弯循对应边线 ± (width_half - inward_bias)
 //             两边都丢线时 error 衰减
 //===================================================================================================================
@@ -139,6 +147,7 @@ void calc_error_image(void)
                                        pursuit_lookahead, &Rx, &Ry);
 
     int16 target_x = WARP_IMAGE_W / 2;
+    int16 target_y = WARP_IMAGE_H - 1;
     uint8 target_valid = 0;
 
     switch (road_type)
@@ -147,16 +156,19 @@ void calc_error_image(void)
             if (left_ok && right_ok)
             {
                 target_x = (int16)((Lx + Rx) / 2);
+                target_y = (int16)((Ly + Ry) / 2);
                 target_valid = 1;
             }
             else if (left_ok)
             {
                 target_x = Lx + inward_off;
+                target_y = Ly;
                 target_valid = 1;
             }
             else if (right_ok)
             {
                 target_x = Rx - inward_off;
+                target_y = Ry;
                 target_valid = 1;
             }
             break;
@@ -165,11 +177,13 @@ void calc_error_image(void)
             if (left_ok)
             {
                 target_x = Lx + inward_off;
+                target_y = Ly;
                 target_valid = 1;
             }
             else if (right_ok)
             {
                 target_x = Rx - inward_off;
+                target_y = Ry;
                 target_valid = 1;
             }
             break;
@@ -178,11 +192,13 @@ void calc_error_image(void)
             if (right_ok)
             {
                 target_x = Rx - inward_off;
+                target_y = Ry;
                 target_valid = 1;
             }
             else if (left_ok)
             {
                 target_x = Lx + inward_off;
+                target_y = Ly;
                 target_valid = 1;
             }
             break;
@@ -214,18 +230,35 @@ void calc_error_image(void)
     // clamp 目标 x
     if (target_x < 0) target_x = 0;
     if (target_x > WARP_IMAGE_W - 1) target_x = WARP_IMAGE_W - 1;
+    if (target_y < 0) target_y = 0;
+    if (target_y > WARP_IMAGE_H - 1) target_y = WARP_IMAGE_H - 1;
 
-    int16 new_error = target_x - WARP_IMAGE_W / 2;
+    float dx = (float)(target_x - WARP_IMAGE_W / 2);
+    float dy = (float)(WARP_IMAGE_H - target_y);
+    float denom;
+    int16 new_error;
 
-    // 弯道中边线短于前瞻距离时放大偏差（补偿前瞻缩短效应）
-    if (road_type != straight)
+    pursuit_debug_target_x = target_x;
+    pursuit_debug_target_y = target_y;
+    pursuit_debug_dx = (int16)dx;
+    pursuit_debug_kappa = 0.0f;
+    pursuit_debug_error_f = 0.0f;
+
+    if (dy < 1.0f) dy = 1.0f;
+    denom = dx * dx + dy * dy;
+    if (denom < 1.0f)
     {
-        uint8 max_count = left_edge_count > right_edge_count ? left_edge_count : right_edge_count;
-        if (max_count < pursuit_lookahead && max_count >= PURSUIT_MIN_POINTS)
-        {
-            new_error = (int16)((int32)new_error * (int32)pursuit_lookahead / (int32)max_count);
-        }
+        new_error = 0;
     }
+    else
+    {
+        float kappa = 2.0f * dx / denom;
+        float error_f = pursuit_lat_scale * dx + pursuit_curve_scale * kappa;
+        pursuit_debug_kappa = kappa;
+        pursuit_debug_error_f = error_f;
+        new_error = (int16)error_f;
+    }
+
 
     // 限幅
     if (new_error > error_limit) new_error = error_limit;

@@ -104,8 +104,19 @@ enum JunctionType {
 #define EDGE_KINK_END_MIN_DX      4         // 末端朝预期方向横移超过此值，才替换反向爬线
 
 // 元器件中空间隙跨越（起点检测用）
-#define ELEMENT_GAP_MAX_DEFAULT   15       // 起点检测允许跨越的最大暗间隙(像素)
+#define ELEMENT_GAP_MAX_DEFAULT   20       // 起点检测允许跨越的最大暗间隙(像素)
 
+// 元器件道路中断修复（按 y 行重建边线）
+#define ELEMENT_REPAIR_ENABLE          1    // 1:启用直道元器件补线
+#define ELEMENT_REPAIR_DEFAULT_WIDTH   40   // 默认道路宽度(像素)
+#define ELEMENT_REPAIR_MIN_WIDTH       6    // 可信道路最小宽度
+#define ELEMENT_REPAIR_MAX_WIDTH       90   // 可信道路最大宽度
+#define ELEMENT_REPAIR_WIDTH_TOL       6    // 道路宽度异常判定最小容差
+#define ELEMENT_REPAIR_CENTER_JUMP     8    // 中心线单行跳变超过该值视为异常
+#define ELEMENT_REPAIR_MODEL_MIN_ROWS  12   // 更新/使用直道模型所需最小可信行数
+#define ELEMENT_REPAIR_MAX_GAP_ROWS    24   // 同帧上下锚点允许补的最大连续断行
+#define ELEMENT_REPAIR_CROSS_MIN_GAP   2    // 左右边线小于该间距视为相交/过近
+#define ELEMENT_REPAIR_RECOVER_FRAMES  3    // 补线后连续恢复帧数达到该值退出补线状态
 // 丢线保护停车
 #define LINE_LOST_MIN_POINTS      3        // 边线点数低于此值视为丢线
 #define LINE_LOST_STOP_FRAMES     50       // 连续丢线帧数达到此值则停车（~250ms @200fps）
@@ -150,6 +161,10 @@ extern volatile enum JunctionType current_junction;  // 当前路口类型
 extern volatile enum JunctionType raw_junction_debug; // 路口检测原始值（调试用）
 extern vuint8 left_slope_mutation;            // 左边线是否检测到斜率突变
 extern vuint8 right_slope_mutation;           // 右边线是否检测到斜率突变
+extern vuint8 element_repair_active;          // 元器件补线状态
+extern vuint8 element_repair_bad_rows;        // 本帧异常/缺失行数
+extern vuint8 element_repair_fixed_rows;      // 本帧补线行数
+extern vuint8 element_repair_cross_rows;      // 本帧左右边线相交/过近行数
 extern vuint8  road_width_avg;        // 平均道路宽度(像素)
 extern vuint8  junction_detected;     // 路口检测标志 0:无 1:有
 

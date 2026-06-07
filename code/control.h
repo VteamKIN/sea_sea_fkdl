@@ -66,8 +66,16 @@ extern float curve_ki;            // 弯道积分系数
 extern float curve_kd;            // 弯道微分系数
 extern int16 pursuit_lookahead;    // Pure Pursuit 前瞻点索引
 extern int16 pursuit_inward_bias;  // Pure Pursuit 单边循线内偏量
+extern float pursuit_lat_scale;    // 横向像素偏差到 error_image 的比例
+extern float pursuit_curve_scale;  // Pure Pursuit 曲率到 error_image 的比例
 extern int16 error_limit;          // 图像偏差限幅
 
+// Pure Pursuit 调试变量
+extern vint16 pursuit_debug_target_x; // Pure Pursuit 目标点 x 坐标
+extern vint16 pursuit_debug_target_y; // Pure Pursuit 目标点 y 坐标
+extern vint16 pursuit_debug_dx;       // 目标点相对图像中心的横向偏差
+extern float  pursuit_debug_kappa;    // Pure Pursuit 图像坐标曲率
+extern float  pursuit_debug_error_f;  // 限幅和平滑前的浮点偏差
 // PID 控制变量
 extern vint16 P;                  // 比例项
 extern vint16 I;                  // 积分项（限幅 ±I_LIMIT）
